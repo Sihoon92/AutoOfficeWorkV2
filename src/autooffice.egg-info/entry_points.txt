@@ -1,0 +1,2 @@
+[console_scripts]
+autooffice = autooffice.cli:main
