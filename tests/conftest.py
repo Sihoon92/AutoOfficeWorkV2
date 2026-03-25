@@ -6,12 +6,21 @@ import json
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+import xlwings as xw
 
 from autooffice.engine.actions import build_default_registry
 from autooffice.engine.context import EngineContext
 from autooffice.engine.runner import PlanRunner
 from autooffice.models.execution_plan import ExecutionPlan
+
+
+@pytest.fixture(scope="session")
+def xw_app():
+    """세션 전체에서 공유하는 Excel 앱 인스턴스."""
+    app = xw.App(visible=False)
+    app.display_alerts = False
+    yield app
+    app.quit()
 
 
 @pytest.fixture
@@ -21,9 +30,18 @@ def tmp_data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def engine_ctx(tmp_data_dir: Path) -> EngineContext:
-    """기본 EngineContext."""
-    return EngineContext(data_dir=tmp_data_dir)
+def engine_ctx(tmp_data_dir: Path, xw_app: xw.App) -> EngineContext:
+    """기본 EngineContext (세션 공유 Excel 앱 사용)."""
+    ctx = EngineContext(data_dir=tmp_data_dir, app=xw_app)
+    yield ctx
+    # 테스트 종료 시 열린 워크북 정리 (앱은 세션 fixture가 관리)
+    for wb in list(ctx.open_workbooks.values()):
+        try:
+            wb.close()
+        except Exception:
+            pass
+    ctx.open_workbooks.clear()
+    ctx.file_paths.clear()
 
 
 @pytest.fixture
@@ -33,16 +51,15 @@ def runner() -> PlanRunner:
 
 
 @pytest.fixture
-def sample_raw_excel(tmp_data_dir: Path) -> Path:
+def sample_raw_excel(tmp_data_dir: Path, xw_app: xw.App) -> Path:
     """더미 raw 데이터 엑셀 파일 생성."""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Sheet1"
+    wb = xw_app.books.add()
+    ws = wb.sheets[0]
+    ws.name = "Sheet1"
 
     # 헤더
     headers = ["날짜", "라인명", "생산수량", "불량수량", "불량유형"]
-    for col, header in enumerate(headers, 1):
-        ws.cell(row=1, column=col, value=header)
+    ws.range((1, 1)).value = headers
 
     # 더미 데이터 (5행)
     data = [
@@ -52,9 +69,7 @@ def sample_raw_excel(tmp_data_dir: Path) -> Path:
         ["2026-03-25", "조립2라인", 900, 15, "외관"],
         ["2026-03-25", "포장라인", 1500, 10, "기타"],
     ]
-    for row_idx, row_data in enumerate(data, 2):
-        for col_idx, value in enumerate(row_data, 1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
+    ws.range((2, 1)).value = data
 
     path = tmp_data_dir / "raw_data.xlsx"
     wb.save(str(path))
@@ -63,25 +78,24 @@ def sample_raw_excel(tmp_data_dir: Path) -> Path:
 
 
 @pytest.fixture
-def sample_template_excel(tmp_data_dir: Path) -> Path:
+def sample_template_excel(tmp_data_dir: Path, xw_app: xw.App) -> Path:
     """더미 양식 엑셀 파일 생성."""
-    wb = Workbook()
+    wb = xw_app.books.add()
 
     # 데이터입력 시트
-    ws_input = wb.active
-    ws_input.title = "데이터입력"
-    for col, header in enumerate(["날짜", "라인명", "생산수량", "불량수량", "불량유형"], 2):
-        ws_input.cell(row=1, column=col, value=header)
+    ws_input = wb.sheets[0]
+    ws_input.name = "데이터입력"
+    headers = ["날짜", "라인명", "생산수량", "불량수량", "불량유형"]
+    ws_input.range((1, 2)).value = headers  # B1부터 시작
 
     # 일별현황 시트
-    ws_daily = wb.create_sheet("일별현황")
+    ws_daily = wb.sheets.add("일별현황", after=ws_input)
     daily_headers = ["날짜", "라인명", "생산수량", "불량수량", "불량유형", "불량률"]
-    for col, header in enumerate(daily_headers, 1):
-        ws_daily.cell(row=1, column=col, value=header)
+    ws_daily.range((1, 1)).value = daily_headers
 
     # 주별현황, 월별현황 시트
-    wb.create_sheet("주별현황")
-    wb.create_sheet("월별현황")
+    ws_weekly = wb.sheets.add("주별현황", after=ws_daily)
+    wb.sheets.add("월별현황", after=ws_weekly)
 
     path = tmp_data_dir / "defect_rate_template.xlsx"
     wb.save(str(path))

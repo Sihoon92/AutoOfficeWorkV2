@@ -6,8 +6,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from openpyxl import load_workbook
-
 from autooffice.engine.actions.base import ActionHandler
 from autooffice.engine.context import EngineContext
 from autooffice.models.action_result import ActionResult
@@ -21,13 +19,12 @@ class OpenFileHandler(ActionHandler):
     params:
         file_path: 파일 경로 (상대경로면 data_dir 기준)
         alias: 컨텍스트 등록명 (선택, 기본값은 파일명)
-        data_only: True면 수식 대신 값만 읽기 (기본 False)
+        data_only: 호환성을 위해 유지 (xlwings는 항상 계산된 값 접근 가능)
     """
 
     def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
         file_path = params.get("file_path", "")
         alias = params.get("alias", "")
-        data_only = params.get("data_only", False)
 
         path = Path(file_path)
         if not path.is_absolute():
@@ -40,13 +37,14 @@ class OpenFileHandler(ActionHandler):
             )
 
         try:
-            wb = load_workbook(str(path), data_only=data_only)
+            wb = ctx.app.books.open(str(path))
             name = alias or path.stem
             ctx.register_workbook(name, wb, path)
+            sheet_names = [s.name for s in wb.sheets]
             return ActionResult(
                 success=True,
-                data={"sheets": wb.sheetnames},
-                message=f"파일 열기 완료: {path.name} (시트: {wb.sheetnames})",
+                data={"sheets": sheet_names},
+                message=f"파일 열기 완료: {path.name} (시트: {sheet_names})",
             )
         except Exception as e:
             return ActionResult(success=False, error=f"파일 열기 실패: {e}")

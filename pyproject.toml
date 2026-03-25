@@ -9,7 +9,7 @@ description = "Claude 사고 프로세스 기반 사무 업무 자동화 실행 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "openpyxl>=3.1.0",
+    "xlwings>=0.30.0",
     "pydantic>=2.0.0",
     "python-pptx>=0.6.21",
     "requests>=2.31.0",

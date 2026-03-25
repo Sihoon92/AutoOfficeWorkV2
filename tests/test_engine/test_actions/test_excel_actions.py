@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openpyxl import Workbook
+import xlwings as xw
 
 from autooffice.engine.actions.excel_actions import (
     ClearRangeHandler,
@@ -15,9 +15,7 @@ from autooffice.engine.context import EngineContext
 class TestReadColumns:
     def test_read_by_header_name(self, engine_ctx: EngineContext, sample_raw_excel):
         """헤더 이름으로 컬럼 읽기."""
-        from openpyxl import load_workbook
-
-        wb = load_workbook(str(sample_raw_excel))
+        wb = engine_ctx.app.books.open(str(sample_raw_excel))
         engine_ctx.register_workbook("raw", wb, sample_raw_excel)
 
         handler = ReadColumnsHandler()
@@ -39,9 +37,7 @@ class TestReadColumns:
 
     def test_read_missing_column(self, engine_ctx: EngineContext, sample_raw_excel):
         """존재하지 않는 컬럼 읽기 시 실패."""
-        from openpyxl import load_workbook
-
-        wb = load_workbook(str(sample_raw_excel))
+        wb = engine_ctx.app.books.open(str(sample_raw_excel))
         engine_ctx.register_workbook("raw", wb, sample_raw_excel)
 
         handler = ReadColumnsHandler()
@@ -62,9 +58,9 @@ class TestReadColumns:
 class TestWriteData:
     def test_write_with_column_mapping(self, engine_ctx: EngineContext, tmp_data_dir):
         """컬럼 매핑으로 데이터 쓰기."""
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "데이터"
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "데이터"
         engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
 
         source_data = [
@@ -86,21 +82,21 @@ class TestWriteData:
 
         assert result.success
         assert result.data["rows_written"] == 2
-        assert ws.cell(row=3, column=2).value == "A"
-        assert ws.cell(row=3, column=3).value == 100
-        assert ws.cell(row=4, column=2).value == "B"
-        assert ws.cell(row=4, column=3).value == 200
+        assert ws.range((3, 2)).value == "A"
+        assert ws.range((3, 3)).value == 100
+        assert ws.range((4, 2)).value == "B"
+        assert ws.range((4, 3)).value == 200
 
 
 class TestClearRange:
     def test_clear_range(self, engine_ctx: EngineContext, tmp_data_dir):
         """셀 범위 클리어."""
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "시트"
-        ws.cell(row=1, column=1, value="헤더")
-        ws.cell(row=2, column=1, value="데이터1")
-        ws.cell(row=3, column=1, value="데이터2")
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "시트"
+        ws.range((1, 1)).value = "헤더"
+        ws.range((2, 1)).value = "데이터1"
+        ws.range((3, 1)).value = "데이터2"
         engine_ctx.register_workbook("test", wb, tmp_data_dir / "test.xlsx")
 
         handler = ClearRangeHandler()
@@ -110,6 +106,6 @@ class TestClearRange:
         )
 
         assert result.success
-        assert ws.cell(row=1, column=1).value == "헤더"  # 보존
-        assert ws.cell(row=2, column=1).value is None  # 클리어됨
-        assert ws.cell(row=3, column=1).value is None  # 클리어됨
+        assert ws.range((1, 1)).value == "헤더"  # 보존
+        assert ws.range((2, 1)).value is None  # 클리어됨
+        assert ws.range((3, 1)).value is None  # 클리어됨
