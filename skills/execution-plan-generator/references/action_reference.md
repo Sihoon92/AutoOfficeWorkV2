@@ -11,7 +11,7 @@
 {
   "action": "OPEN_FILE",
   "params": {
-    "file_path": "raw_data.xlsx",
+    "file_path": "{{raw_data}}",
     "alias": "raw",
     "data_only": true
   }
@@ -20,7 +20,7 @@
 
 | param | 필수 | 설명 |
 |-------|------|------|
-| file_path | O | 파일 경로 (상대경로면 --data 기준) |
+| file_path | O | 파일 경로. `{{input_key}}` 플레이스홀더 사용 권장 (사용자가 실행 시 경로 지정 가능). 상대경로면 --data 기준 |
 | alias | - | 이후 step에서 참조할 이름 (기본: 파일명) |
 | data_only | - | true면 수식 대신 계산된 값으로 읽기 (기본 false) |
 
@@ -32,7 +32,7 @@
   "action": "SAVE_FILE",
   "params": {
     "file": "template",
-    "save_as": "result.xlsx"
+    "save_as": "{{output}}"
   }
 }
 ```
@@ -40,7 +40,7 @@
 | param | 필수 | 설명 |
 |-------|------|------|
 | file | O | 컨텍스트에 등록된 워크북 alias |
-| save_as | - | 다른 이름으로 저장 (미지정 시 원본 경로) |
+| save_as | - | 다른 이름으로 저장. `{{input_key}}` 플레이스홀더 사용 가능 (미지정 시 원본 경로) |
 
 ---
 

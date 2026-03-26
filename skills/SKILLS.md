@@ -123,47 +123,19 @@ thinking_log.txt에는 실제 데이터 값이 포함되지 않는다. 구조와
 
 | ACTION | 설명 | 필수 params |
 |--------|------|-------------|
-| OPEN_FILE | 파일 열기 | file_path ({{input_key}} 플레이스홀더 사용 권장) |
+| OPEN_FILE | 파일 열기 | file_path |
 | READ_COLUMNS | 특정 컬럼 데이터 읽기 | file, sheet, columns, start_row |
 | READ_RANGE | 셀 범위 읽기 | file, sheet, range |
 | WRITE_DATA | 데이터 쓰기 | source, target_file, target_sheet, target_start, column_mapping |
 | CLEAR_RANGE | 셀 범위 비우기 | file, sheet, range |
 | RECALCULATE | 수식 재계산 트리거 | file |
-| SAVE_FILE | 파일 저장 | file, save_as (optional, {{output_key}} 플레이스홀더 사용 가능) |
+| SAVE_FILE | 파일 저장 | file, save_as (optional) |
 | VALIDATE | 데이터 검증 | check, source, logic |
 | FORMAT_MESSAGE | 텍스트 메시지 구성 | template, data_source |
 | SEND_MESSENGER | 메신저 발송 | to, message, attachment (optional) |
 | SEND_EMAIL | 이메일 발송 | to, subject, body, attachment (optional) |
 | GENERATE_PPT | PPT 생성 | data_source, template (optional), output_path |
 | LOG | 로그 기록 | message, level (info/warn/error) |
-
-#### 사용자 파일 경로 플레이스홀더 (`{{input_key}}`)
-
-실행 계획의 파일 경로는 사용자마다 다를 수 있다. Claude가 plan 생성 시 자신의 경로를 하드코딩하는 대신, `inputs` 키를 `{{key}}` 형태로 참조하면 실행 시 사용자가 실제 경로를 지정할 수 있다.
-
-**inputs에 기본 경로 설정:**
-```json
-"inputs": {
-  "raw_data": {
-    "description": "생산 데이터 원본",
-    "expected_format": "xlsx",
-    "file_path": "raw_data.xlsx"
-  }
-}
-```
-
-**step params에서 플레이스홀더 사용:**
-```json
-{"step": 1, "action": "OPEN_FILE", "params": {"file_path": "{{raw_data}}", "alias": "raw"}}
-{"step": 8, "action": "SAVE_FILE", "params": {"file": "template", "save_as": "{{output}}"}}
-```
-
-**사용자 실행 시 경로 지정:**
-```bash
-autooffice run plan.json --data ./data/ -f raw_data=./내_데이터.xlsx -f output=./결과.xlsx
-```
-
-`-f` 옵션을 생략하면 대화형으로 경로를 물어본다. `inputs`의 `file_path`에 기본값이 있으면 자동 사용된다.
 
 ### 출력물 3: test_plan.py
 
