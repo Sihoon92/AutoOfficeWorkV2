@@ -13,12 +13,14 @@
     "raw_data": {
       "description": "생산 데이터 원본",
       "expected_format": "xlsx",
+      "file_path": "raw_data.xlsx",
       "expected_sheets": ["Sheet1"],
       "expected_columns": ["날짜", "라인명", "생산수량", "불량수량", "불량유형"]
     },
     "template": {
       "description": "불량률 산출 양식",
       "expected_format": "xlsx",
+      "file_path": "defect_rate_template.xlsx",
       "expected_sheets": ["데이터입력", "일별현황", "주별현황", "월별현황"]
     }
   },
@@ -28,7 +30,7 @@
       "action": "OPEN_FILE",
       "description": "raw 데이터 파일 열기",
       "params": {
-        "file_path": "raw_data.xlsx",
+        "file_path": "{{raw_data}}",
         "alias": "raw",
         "data_only": true
       },
@@ -40,7 +42,7 @@
       "action": "OPEN_FILE",
       "description": "불량률 양식 파일 열기",
       "params": {
-        "file_path": "defect_rate_template.xlsx",
+        "file_path": "{{template}}",
         "alias": "template"
       },
       "expect": {"condition": "not_empty", "value": null},
@@ -119,7 +121,7 @@
       "description": "양식 파일 저장 (결과 포함)",
       "params": {
         "file": "template",
-        "save_as": "defect_rate_result.xlsx"
+        "save_as": "{{output}}"
       },
       "on_fail": "STOP"
     },
@@ -128,7 +130,7 @@
       "action": "OPEN_FILE",
       "description": "저장된 결과 파일을 data_only로 다시 열기 (수식 결과 읽기용)",
       "params": {
-        "file_path": "defect_rate_result.xlsx",
+        "file_path": "{{output}}",
         "alias": "result",
         "data_only": true
       },

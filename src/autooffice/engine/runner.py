@@ -104,8 +104,11 @@ class PlanRunner:
                     f"Step {step.step}: 미등록 ACTION '{step.action.value}'"
                 )
 
-        # 2) store_as 참조 체인 검증
+        # 2) store_as 참조 체인 검증 및 {{placeholder}} 수집
+        import re
+
         defined_vars: set[str] = set()
+        used_placeholders: set[str] = set()
         for step in plan.steps:
             # params에서 $variable 참조 확인
             for key, val in step.params.items():
@@ -116,9 +119,18 @@ class PlanRunner:
                             f"Step {step.step}: 정의되지 않은 변수 '${var_name}' 참조 "
                             f"(param: {key})"
                         )
+                # {{placeholder}} 수집
+                if isinstance(val, str):
+                    used_placeholders.update(re.findall(r"\{\{(\w+)\}\}", val))
             # store_as 등록
             if step.store_as:
                 defined_vars.add(step.store_as)
+
+        # 사용된 플레이스홀더 정보 로그
+        if used_placeholders:
+            logger.info(
+                "사용자 파일 경로 플레이스홀더 발견: %s", ", ".join(sorted(used_placeholders))
+            )
 
         # 3) step 번호 연속성 확인
         expected = 1

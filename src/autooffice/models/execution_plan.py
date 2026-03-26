@@ -44,6 +44,7 @@ class InputSpec(BaseModel):
 
     description: str
     expected_format: str
+    file_path: str = Field(default="", description="기본 파일 경로 (사용자가 재지정 가능)")
     expected_sheets: list[str] = Field(default_factory=list)
     expected_columns: list[str] = Field(default_factory=list)
 

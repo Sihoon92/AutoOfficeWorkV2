@@ -10,6 +10,7 @@ EngineContext는 실행 중인 plan의 런타임 상태를 관리한다:
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +26,19 @@ class EngineContext:
     store_as로 저장한 값은 variables에서 참조 가능하다.
     """
 
-    def __init__(self, data_dir: str | Path = ".", app: xw.App | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path = ".",
+        app: xw.App | None = None,
+        user_file_paths: dict[str, str] | None = None,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self._app = app
         self._owns_app = app is None
         self.open_workbooks: dict[str, xw.Book] = {}
         self.file_paths: dict[str, Path] = {}
         self.variables: dict[str, Any] = {}
+        self.user_file_paths: dict[str, str] = user_file_paths or {}
         self.log_messages: list[str] = []
         self.dry_run: bool = False
 
@@ -50,12 +57,33 @@ class EngineContext:
         logger.debug("변수 저장: %s = %s", key, type(value).__name__)
 
     def resolve(self, value: Any) -> Any:
-        """값이 $variable_name 형식이면 변수 저장소에서 참조를 해소한다."""
-        if isinstance(value, str) and value.startswith("$"):
+        """값의 참조를 해소한다.
+
+        - $variable_name: 변수 저장소에서 참조 해소
+        - {{input_key}}: 사용자 지정 파일 경로에서 참조 해소
+        """
+        if not isinstance(value, str):
+            return value
+
+        if value.startswith("$"):
             var_name = value[1:]
             if var_name not in self.variables:
                 raise KeyError(f"변수 '{var_name}'이(가) 정의되지 않았습니다.")
             return self.variables[var_name]
+
+        # {{input_key}} 플레이스홀더 해소
+        def _replace_placeholder(match: re.Match) -> str:
+            key = match.group(1)
+            if key not in self.user_file_paths:
+                raise KeyError(
+                    f"사용자 파일 경로 '{key}'이(가) 지정되지 않았습니다. "
+                    f"--file {key}=<경로> 옵션으로 지정하세요."
+                )
+            return self.user_file_paths[key]
+
+        if "{{" in value:
+            return re.sub(r"\{\{(\w+)\}\}", _replace_placeholder, value)
+
         return value
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, Any]:

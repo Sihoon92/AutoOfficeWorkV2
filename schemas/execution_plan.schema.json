@@ -76,6 +76,10 @@
           "type": "string",
           "enum": ["xlsx", "xls", "csv", "json", "txt"]
         },
+        "file_path": {
+          "type": "string",
+          "description": "기본 파일 경로 (사용자가 --file 옵션으로 재지정 가능)"
+        },
         "expected_sheets": {
           "type": "array",
           "items": { "type": "string" }
