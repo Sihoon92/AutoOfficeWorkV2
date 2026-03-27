@@ -387,3 +387,102 @@ class TestCopyRange:
         # D5 ~ D14 (start_row=3 + offset=2 = 5)
         assert ws_tgt.range("D5").value == 10
         assert ws_tgt.range("D14").value == 100
+
+
+class TestFindDateColumnCopyRangeIntegration:
+    """FIND_DATE_COLUMN → COPY_RANGE 통합 시나리오 (dot notation 변수 참조 포함)."""
+
+    def test_full_workflow(self, engine_ctx, runner, tmp_data_dir):
+        """날짜 열 탐색 → 시트 간 값 복사 전체 흐름."""
+        today = date.today()
+        d_minus_2 = today - timedelta(days=2)
+        d_minus_1 = today - timedelta(days=1)
+
+        # 워크북 생성: 소스시트(자재계산식) + 타겟시트(Sheet1, 날짜 헤더)
+        wb = engine_ctx.app.books.add()
+        ws_calc = wb.sheets[0]
+        ws_calc.name = "자재계산식"
+        # D7:D9에 계산 결과값 넣기
+        ws_calc.range("D7").value = 11.5
+        ws_calc.range("D8").value = 22.3
+        ws_calc.range("D9").value = 33.7
+
+        ws_sheet1 = wb.sheets.add("Sheet1", after=ws_calc)
+        # 행 4에 날짜 헤더: C4=전전일, D4=전일
+        ws_sheet1.range("C4").value = f"{d_minus_2.month}/{d_minus_2.day}"
+        ws_sheet1.range("D4").value = f"{d_minus_1.month}/{d_minus_1.day}"
+
+        path = tmp_data_dir / "material.xlsx"
+        engine_ctx.register_workbook("material", wb, path)
+
+        # Execution Plan
+        from autooffice.models.execution_plan import ExecutionPlan
+
+        plan_dict = {
+            "task_id": "daily_material_append",
+            "description": "자재 계산식 결과를 Sheet1 오늘 열에 추가",
+            "created_by": "Claude",
+            "created_at": "2026-03-27T09:00:00+09:00",
+            "inputs": {
+                "material": {
+                    "description": "자재 관리 파일",
+                    "expected_format": "xlsx",
+                    "expected_sheets": ["자재계산식", "Sheet1"],
+                }
+            },
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "FIND_DATE_COLUMN",
+                    "description": "Sheet1에서 오늘 날짜 열 탐색",
+                    "params": {
+                        "workbook": "material",
+                        "sheet": "Sheet1",
+                        "scan_range": "A1:ZZ10",
+                        "date": "today",
+                    },
+                    "store_as": "date_info",
+                },
+                {
+                    "step": 2,
+                    "action": "COPY_RANGE",
+                    "description": "자재계산식 D7:D9 → Sheet1 오늘 열",
+                    "params": {
+                        "workbook": "material",
+                        "source_sheet": "자재계산식",
+                        "source_range": "D7:D9",
+                        "target_sheet": "Sheet1",
+                        "target_column": "$date_info.column",
+                        "target_start_row": "$date_info.date_row",
+                        "row_offset": 1,
+                        "paste_type": "values",
+                    },
+                },
+                {
+                    "step": 3,
+                    "action": "SAVE_FILE",
+                    "description": "저장",
+                    "params": {"file": "material"},
+                },
+            ],
+            "final_output": {"type": "file", "description": "자재 관리 파일 업데이트"},
+        }
+
+        plan = ExecutionPlan.model_validate(plan_dict)
+
+        # validate (dry-run)
+        errors = runner.validate(plan)
+        assert errors == [], f"검증 오류: {errors}"
+
+        # run
+        log = runner.run(plan, engine_ctx)
+        assert log.success, f"실행 실패: {log.error}"
+
+        # 결과 검증: Sheet1의 E열(오늘 날짜)에 값이 들어있어야 함
+        # C4=전전일, D4=전일 → 오늘=E열, 데이터는 E5:E7
+        wb2 = engine_ctx.app.books.open(str(path))
+        ws = wb2.sheets["Sheet1"]
+        assert ws.range("E5").value == 11.5
+        assert ws.range("E6").value == 22.3
+        assert ws.range("E7").value == 33.7
+        wb2.close()
