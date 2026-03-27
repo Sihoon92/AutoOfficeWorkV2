@@ -50,12 +50,27 @@ class EngineContext:
         logger.debug("변수 저장: %s = %s", key, type(value).__name__)
 
     def resolve(self, value: Any) -> Any:
-        """값이 $variable_name 형식이면 변수 저장소에서 참조를 해소한다."""
+        """값이 $variable_name 또는 $variable_name.field 형식이면 변수 저장소에서 참조를 해소한다."""
         if isinstance(value, str) and value.startswith("$"):
-            var_name = value[1:]
+            var_path = value[1:]
+            parts = var_path.split(".", 1)
+            var_name = parts[0]
             if var_name not in self.variables:
                 raise KeyError(f"변수 '{var_name}'이(가) 정의되지 않았습니다.")
-            return self.variables[var_name]
+            result = self.variables[var_name]
+            if len(parts) > 1:
+                field = parts[1]
+                if not isinstance(result, dict):
+                    raise TypeError(
+                        f"변수 '{var_name}'은(는) dict가 아니므로 "
+                        f"'{field}' 필드에 접근할 수 없습니다."
+                    )
+                if field not in result:
+                    raise KeyError(
+                        f"변수 '{var_name}'에 '{field}' 필드가 없습니다."
+                    )
+                return result[field]
+            return result
         return value
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, Any]:
