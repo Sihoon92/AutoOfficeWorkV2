@@ -59,19 +59,19 @@ Phase 1: Claude (no data)              Phase 2: Python Engine (with data)
 - **`src/autooffice/engine/actions/`** — Registry-based handler pattern. Each handler extends `ActionHandler` ABC. New actions: create handler class → register in `build_default_registry()` in `__init__.py`
 - **`src/autooffice/cache/`** — `PlanCache`: template-hash + task-type based plan reuse, stored at `~/.autooffice/cache/`
 - **`src/autooffice/cli.py`** — Click CLI entry point
-- **`schemas/execution_plan.schema.json`** — JSON Schema contract between Claude and engine
+- **`skills/execution-plan-generator/`** — Claude's plan generation skill (self-contained: SKILL.md, JSON schema, action reference, sample plan, Pydantic model reference)
 - **`skills/SKILLS.md`** — Claude's 5-phase thinking process instructions for plan generation
 
 ### Action Handler Registry Pattern
 
-All 11 action types (OPEN_FILE, READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, SAVE_FILE, VALIDATE, FORMAT_MESSAGE, SEND_MESSENGER, LOG) are registered via `build_default_registry()`. To add a new action:
+All 13 action types (OPEN_FILE, READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, SAVE_FILE, VALIDATE, FORMAT_MESSAGE, SEND_MESSENGER, LOG) are registered via `build_default_registry()`. To add a new action:
 1. Create a handler class extending `ActionHandler` in `engine/actions/`
 2. Implement `execute(params, ctx) → ActionResult`
 3. Register with `ActionType.XXX.value` key in `build_default_registry()`
 
 ### Inter-Step Data Flow
 
-Steps communicate via `EngineContext.variables`. A step with `store_as: "my_data"` saves its result; later steps reference it as `$my_data` in params. `ctx.resolve_params()` handles substitution.
+Steps communicate via `EngineContext.variables`. A step with `store_as: "my_data"` saves its result; later steps reference it as `$my_data` in params. For dict results (e.g., FIND_DATE_COLUMN returns `{"column": "CP", "date_row": 6}`), use dot notation: `$my_data.column`, `$my_data.date_row`. `ctx.resolve_params()` handles both simple and dot-notation substitution.
 
 ### Failure Handling
 

@@ -166,6 +166,121 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 |-------|------|------|
 | file | O | 워크북 alias |
 
+### FIND_DATE_COLUMN
+시트에서 날짜 패턴을 탐색하여 대상 열과 날짜 행을 결정한다. 날짜가 가장 많은 행을 자동으로 date header row로 인식한다.
+
+```json
+{
+  "action": "FIND_DATE_COLUMN",
+  "params": {
+    "workbook": "material",
+    "sheet": "Sheet1",
+    "scan_range": "A1:ZZ10",
+    "date": "today"
+  },
+  "store_as": "date_info"
+}
+```
+
+| param | 필수 | 설명 |
+|-------|------|------|
+| workbook | O | 워크북 alias |
+| sheet | O | 시트명 |
+| scan_range | - | 날짜를 탐색할 셀 범위 (기본: "A1:ZZ10") |
+| date | - | 대상 날짜. `"today"` 또는 `"YYYY-MM-DD"` (기본: "today") |
+
+**반환값** (store_as로 저장): `{"column": "CP", "date_row": 6}`
+- `column`: 대상 날짜의 열 문자
+- `date_row`: 날짜가 발견된 행 번호
+
+**날짜 인식 형식**: Excel datetime 객체, `"M/D"` 또는 `"MM/DD"` 문자열
+
+**동작 방식**:
+1. scan_range 내 날짜 셀 스캔
+2. 날짜가 가장 많은 행 = date header row
+3. 대상 날짜와 정확히 일치하는 열이 있으면 → 해당 열 반환
+4. 없으면 → 마지막 날짜 다음 열을 패턴 기반 추론 (열/일 간격 비율 계산)
+
+**이후 step에서 참조**: `$date_info.column` → `"CP"`, `$date_info.date_row` → `6` (점 표기법)
+
+### COPY_RANGE
+같은 워크북 내에서 소스 시트의 범위를 타겟 시트의 지정 열/행에 복사한다.
+
+```json
+{
+  "action": "COPY_RANGE",
+  "params": {
+    "workbook": "material",
+    "source_sheet": "자재 계산식",
+    "source_range": "D7:D48",
+    "target_sheet": "Sheet1",
+    "target_column": "$date_info.column",
+    "target_start_row": "$date_info.date_row",
+    "row_offset": 1,
+    "paste_type": "values"
+  }
+}
+```
+
+| param | 필수 | 설명 |
+|-------|------|------|
+| workbook | O | 워크북 alias |
+| source_sheet | O | 소스 시트명 |
+| source_range | O | 소스 범위 (예: "D7:D48") |
+| target_sheet | O | 타겟 시트명 |
+| target_column | O | 타겟 열 문자 (예: "CP", 변수 참조 가능) |
+| target_start_row | O | 타겟 기준 행 (변수 참조 가능) |
+| row_offset | - | 기준 행에서의 오프셋 (기본: 0). 실제 시작행 = target_start_row + row_offset |
+| paste_type | - | `"values"` (기본), `"formulas"`, `"all"` |
+
+**paste_type 설명**:
+- `values`: 수식의 계산 결과(값)만 복사. 소스에 수식이 있어도 타겟에는 값만 들어감
+- `formulas`: 수식 문자열 자체를 복사
+- `all`: values와 동일 (향후 서식 복사 지원 예정)
+
+**반환값**: `{"rows_copied": 42}`
+
+---
+
+## 날짜 열 탐색 + 시트 간 복사 패턴
+
+FIND_DATE_COLUMN과 COPY_RANGE를 조합하면, 날짜 기반으로 열이 확장되는 엑셀에 자동으로 데이터를 추가할 수 있다.
+
+```json
+{
+  "step": 5,
+  "action": "FIND_DATE_COLUMN",
+  "description": "Sheet1에서 오늘 날짜 열 탐색",
+  "params": {
+    "workbook": "mat",
+    "sheet": "Sheet1",
+    "scan_range": "A1:ZZ10",
+    "date": "today"
+  },
+  "store_as": "date_info"
+},
+{
+  "step": 6,
+  "action": "COPY_RANGE",
+  "description": "자재 계산식 결과를 오늘 날짜 열에 값으로 붙여넣기",
+  "params": {
+    "workbook": "mat",
+    "source_sheet": "자재 계산식",
+    "source_range": "D7:D48",
+    "target_sheet": "Sheet1",
+    "target_column": "$date_info.column",
+    "target_start_row": "$date_info.date_row",
+    "row_offset": 1,
+    "paste_type": "values"
+  }
+}
+```
+
+**핵심 포인트**:
+- `$date_info.column`과 `$date_info.date_row`는 **점 표기법**으로 dict 필드를 참조한다
+- `row_offset: 1`은 날짜 헤더 행 바로 아래부터 데이터를 쓰겠다는 의미
+- `paste_type: "values"`는 소스의 수식이 아닌 계산된 값만 복사
+
 ---
 
 ## 검증
@@ -333,5 +448,5 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 | params | O | ACTION별 파라미터 |
 | expect | - | 성공 기준 `{"condition": "...", "value": ...}` |
 | on_fail | - | 실패 시 행동: STOP, SKIP, RETRY, WARN_AND_CONTINUE (기본 STOP) |
-| store_as | - | 결과를 변수로 저장 (이후 step에서 $변수명으로 참조) |
+| store_as | - | 결과를 변수로 저장 (이후 step에서 `$변수명` 또는 `$변수명.필드명`으로 참조) |
 | require_confirm | - | true면 사용자 확인 후 실행 (외부 발송 시 권장) |

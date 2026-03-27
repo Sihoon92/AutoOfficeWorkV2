@@ -104,6 +104,8 @@
             "WRITE_DATA",
             "CLEAR_RANGE",
             "RECALCULATE",
+            "FIND_DATE_COLUMN",
+            "COPY_RANGE",
             "SAVE_FILE",
             "VALIDATE",
             "FORMAT_MESSAGE",
