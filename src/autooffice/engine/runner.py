@@ -110,7 +110,7 @@ class PlanRunner:
             # params에서 $variable 참조 확인
             for key, val in step.params.items():
                 if isinstance(val, str) and val.startswith("$"):
-                    var_name = val[1:]
+                    var_name = val[1:].split(".", 1)[0]
                     if var_name not in defined_vars:
                         errors.append(
                             f"Step {step.step}: 정의되지 않은 변수 '${var_name}' 참조 "

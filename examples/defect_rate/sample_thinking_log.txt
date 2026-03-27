@@ -104,7 +104,7 @@ Step 14: 완료 로그
 
 on_fail 전략:
   - 핵심 step (데이터 읽기/쓰기): STOP
-  - RECALCULATE: WARN_AND_CONTINUE (openpyxl 한계)
+  - RECALCULATE: WARN_AND_CONTINUE (xlwings로 실제 재계산 가능)
   - 경고 검증: WARN_AND_CONTINUE (알림 목적)
   - 완료 로그: SKIP (실패해도 작업 자체는 완료)
 

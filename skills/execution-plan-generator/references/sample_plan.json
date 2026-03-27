@@ -1,0 +1,203 @@
+{
+  "task_id": "daily_defect_rate_report",
+  "description": "일/주/월별 불량률 산출 후 메신저로 품질현황 전파",
+  "created_by": "Claude",
+  "created_at": "2026-03-25T09:00:00+09:00",
+  "version": "1.0.0",
+  "metadata": {
+    "task_type": "defect_rate",
+    "template_hash": "a1b2c3d4e5f6...",
+    "reusable": true
+  },
+  "inputs": {
+    "raw_data": {
+      "description": "생산 데이터 원본",
+      "expected_format": "xlsx",
+      "expected_sheets": ["Sheet1"],
+      "expected_columns": ["날짜", "라인명", "생산수량", "불량수량", "불량유형"]
+    },
+    "template": {
+      "description": "불량률 산출 양식",
+      "expected_format": "xlsx",
+      "expected_sheets": ["데이터입력", "일별현황", "주별현황", "월별현황"]
+    }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "action": "OPEN_FILE",
+      "description": "raw 데이터 파일 열기",
+      "params": {
+        "file_path": "raw_data.xlsx",
+        "alias": "raw",
+        "data_only": true
+      },
+      "expect": {"condition": "not_empty", "value": null},
+      "on_fail": "STOP"
+    },
+    {
+      "step": 2,
+      "action": "OPEN_FILE",
+      "description": "불량률 양식 파일 열기",
+      "params": {
+        "file_path": "defect_rate_template.xlsx",
+        "alias": "template"
+      },
+      "expect": {"condition": "not_empty", "value": null},
+      "on_fail": "STOP"
+    },
+    {
+      "step": 3,
+      "action": "READ_COLUMNS",
+      "description": "raw 데이터에서 필요 컬럼 읽기",
+      "params": {
+        "file": "raw",
+        "sheet": "Sheet1",
+        "columns": ["날짜", "라인명", "생산수량", "불량수량", "불량유형"],
+        "start_row": 2
+      },
+      "expect": {"condition": "row_count_gt", "value": 0},
+      "on_fail": "STOP",
+      "store_as": "raw_data"
+    },
+    {
+      "step": 4,
+      "action": "VALIDATE",
+      "description": "raw 데이터 기본 검증 - 필수 컬럼 존재 확인",
+      "params": {
+        "check": "column_exists",
+        "source": "$raw_data",
+        "logic": {
+          "columns": ["날짜", "라인명", "생산수량", "불량수량", "불량유형"]
+        }
+      },
+      "on_fail": "STOP"
+    },
+    {
+      "step": 5,
+      "action": "CLEAR_RANGE",
+      "description": "양식의 기존 데이터 클리어",
+      "params": {
+        "file": "template",
+        "sheet": "데이터입력",
+        "range": "B3:F10000"
+      },
+      "on_fail": "STOP"
+    },
+    {
+      "step": 6,
+      "action": "WRITE_DATA",
+      "description": "raw 데이터를 양식의 데이터입력 시트에 쓰기",
+      "params": {
+        "source": "$raw_data",
+        "target_file": "template",
+        "target_sheet": "데이터입력",
+        "target_start": "B3",
+        "column_mapping": {
+          "날짜": "B",
+          "라인명": "C",
+          "생산수량": "D",
+          "불량수량": "E",
+          "불량유형": "F"
+        }
+      },
+      "expect": {"condition": "not_empty", "value": null},
+      "on_fail": "STOP"
+    },
+    {
+      "step": 7,
+      "action": "RECALCULATE",
+      "description": "수식 재계산 트리거 (일/주/월별 불량률 자동 계산)",
+      "params": {
+        "file": "template"
+      },
+      "on_fail": "WARN_AND_CONTINUE"
+    },
+    {
+      "step": 8,
+      "action": "SAVE_FILE",
+      "description": "양식 파일 저장 (결과 포함)",
+      "params": {
+        "file": "template",
+        "save_as": "defect_rate_result.xlsx"
+      },
+      "on_fail": "STOP"
+    },
+    {
+      "step": 9,
+      "action": "OPEN_FILE",
+      "description": "저장된 결과 파일을 data_only로 다시 열기 (수식 결과 읽기용)",
+      "params": {
+        "file_path": "defect_rate_result.xlsx",
+        "alias": "result",
+        "data_only": true
+      },
+      "on_fail": "STOP"
+    },
+    {
+      "step": 10,
+      "action": "READ_RANGE",
+      "description": "일별현황에서 결과 읽기",
+      "params": {
+        "file": "result",
+        "sheet": "일별현황",
+        "range": "A2:G10"
+      },
+      "store_as": "daily_summary",
+      "on_fail": "STOP"
+    },
+    {
+      "step": 11,
+      "action": "VALIDATE",
+      "description": "불량률 5% 초과 라인 체크 (경고용)",
+      "params": {
+        "check": "value_range",
+        "source": "$daily_summary",
+        "logic": {
+          "column": "불량률",
+          "min": 0,
+          "max": 5
+        }
+      },
+      "on_fail": "WARN_AND_CONTINUE",
+      "store_as": "high_defect_alert"
+    },
+    {
+      "step": 12,
+      "action": "FORMAT_MESSAGE",
+      "description": "메신저 발송용 메시지 구성",
+      "params": {
+        "template": "[품질현황 보고]\n\n일별 불량률 현황이 첨부 파일에 정리되었습니다.\n결과 파일: defect_rate_result.xlsx\n\n※ 불량률 5% 초과 라인이 있을 경우 별도 알림됩니다.",
+        "data_source": "$daily_summary"
+      },
+      "store_as": "messenger_message",
+      "on_fail": "STOP"
+    },
+    {
+      "step": 13,
+      "action": "SEND_MESSENGER",
+      "description": "품질관리팀 채널에 결과 전파",
+      "params": {
+        "to": "#품질관리팀",
+        "message": "$messenger_message",
+        "attachment": "defect_rate_result.xlsx"
+      },
+      "require_confirm": true,
+      "on_fail": "STOP"
+    },
+    {
+      "step": 14,
+      "action": "LOG",
+      "description": "작업 완료 로그",
+      "params": {
+        "message": "일별 불량률 산출 및 메신저 전파 완료",
+        "level": "info"
+      },
+      "on_fail": "SKIP"
+    }
+  ],
+  "final_output": {
+    "type": "messenger",
+    "description": "#품질관리팀 채널에 일별 불량률 현황 및 결과 엑셀 파일 발송"
+  }
+}

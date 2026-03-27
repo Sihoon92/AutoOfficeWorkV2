@@ -1,11 +1,11 @@
-"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE."""
+"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE."""
 
 from __future__ import annotations
 
 import logging
+import re
+from datetime import date, datetime
 from typing import Any
-
-from openpyxl.utils import get_column_letter, column_index_from_string
 
 from autooffice.engine.actions.base import ActionHandler
 from autooffice.engine.context import EngineContext
@@ -13,6 +13,65 @@ from autooffice.models.action_result import ActionResult
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# 유틸리티 함수 (openpyxl.utils 대체)
+# ---------------------------------------------------------------------------
+
+def _col_letter_to_index(col: str) -> int:
+    """컬럼 문자를 1-based 인덱스로 변환: 'A' -> 1, 'B' -> 2, 'AA' -> 27."""
+    result = 0
+    for char in col.upper():
+        result = result * 26 + (ord(char) - ord("A") + 1)
+    return result
+
+
+def _parse_coordinate(coord: str) -> tuple[str, int]:
+    """셀 좌표를 (컬럼문자, 행번호)로 분리: 'B3' -> ('B', 3)."""
+    match = re.match(r"^([A-Za-z]+)(\d+)$", coord)
+    if not match:
+        raise ValueError(f"잘못된 셀 좌표: {coord}")
+    return match.group(1).upper(), int(match.group(2))
+
+
+def _col_index_to_letter(idx: int) -> str:
+    """1-based 인덱스를 컬럼 문자로 변환: 1 -> 'A', 27 -> 'AA'."""
+    result: list[str] = []
+    while idx > 0:
+        idx, remainder = divmod(idx - 1, 26)
+        result.append(chr(remainder + ord("A")))
+    return "".join(reversed(result))
+
+
+def _try_parse_date(value: Any, year: int | None = None) -> date | None:
+    """셀 값을 date로 파싱 시도. 실패 시 None 반환.
+
+    지원 형식:
+    - datetime 객체 → date로 변환
+    - date 객체 → 그대로 반환
+    - 문자열 "M/D" 또는 "MM/DD" → 올해(또는 지정 연도) 기준 date 생성
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        match = re.match(r"^(\d{1,2})/(\d{1,2})$", value.strip())
+        if match:
+            month, day = int(match.group(1)), int(match.group(2))
+            y = year or date.today().year
+            try:
+                return date(y, month, day)
+            except ValueError:
+                return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 핸들러
+# ---------------------------------------------------------------------------
 
 class ReadColumnsHandler(ActionHandler):
     """READ_COLUMNS: 특정 시트에서 지정 컬럼의 데이터를 읽는다.
@@ -34,34 +93,52 @@ class ReadColumnsHandler(ActionHandler):
 
         try:
             wb = ctx.get_workbook(alias)
-            ws = wb[sheet_name]
+            ws = wb.sheets[sheet_name]
 
             # 헤더 행에서 컬럼 인덱스 매핑
-            header_map = {}
-            for cell in ws[1]:
-                if cell.value is not None:
-                    header_map[str(cell.value)] = cell.column
+            header_map: dict[str, int] = {}
+            last_col = ws.used_range.last_cell.column
+            if last_col > 0:
+                header_values = ws.range((1, 1), (1, last_col)).value
+                if not isinstance(header_values, list):
+                    header_values = [header_values]
+                for col_idx, val in enumerate(header_values, 1):
+                    if val is not None:
+                        header_map[str(val)] = col_idx
 
             # 컬럼 인덱스 결정
-            col_indices = []
+            col_indices: list[int] = []
             for col in columns:
                 if col in header_map:
                     col_indices.append(header_map[col])
                 elif isinstance(col, str) and col.isalpha() and col.isascii():
-                    col_indices.append(column_index_from_string(col))
+                    col_indices.append(_col_letter_to_index(col))
                 else:
                     return ActionResult(
                         success=False,
                         error=f"컬럼 '{col}'을 찾을 수 없습니다. 사용 가능: {list(header_map.keys())}",
                     )
 
-            # 데이터 읽기
-            actual_end = end_row or ws.max_row
+            # 데이터 읽기 (컬럼별 배치 읽기로 COM 호출 최소화)
+            actual_end = end_row or ws.used_range.last_cell.row
+            if actual_end < start_row:
+                return ActionResult(success=True, data=[], message="데이터 없음")
+
+            col_data: dict[str, list] = {}
+            for col_name, col_idx in zip(columns, col_indices):
+                if start_row == actual_end:
+                    values = [ws.range((start_row, col_idx)).value]
+                else:
+                    values = ws.range((start_row, col_idx), (actual_end, col_idx)).value
+                    if not isinstance(values, list):
+                        values = [values]
+                col_data[col_name] = values
+
+            # 행 단위로 조합
+            num_rows = actual_end - start_row + 1
             data = []
-            for row_idx in range(start_row, actual_end + 1):
-                row_data = {}
-                for col_name, col_idx in zip(columns, col_indices):
-                    row_data[col_name] = ws.cell(row=row_idx, column=col_idx).value
+            for i in range(num_rows):
+                row_data = {col: col_data[col][i] for col in columns}
                 # 빈 행 스킵 (모든 값이 None)
                 if any(v is not None for v in row_data.values()):
                     data.append(row_data)
@@ -91,12 +168,29 @@ class ReadRangeHandler(ActionHandler):
 
         try:
             wb = ctx.get_workbook(alias)
-            ws = wb[sheet_name]
+            ws = wb.sheets[sheet_name]
 
-            data = []
-            for row in ws[cell_range]:
-                row_values = [cell.value for cell in row]
-                data.append(row_values)
+            rng = ws.range(cell_range)
+            raw = rng.value
+
+            # 2D 리스트로 정규화
+            if raw is None:
+                data = []
+            elif not isinstance(raw, list):
+                # 단일 셀
+                data = [[raw]]
+            elif len(raw) > 0 and isinstance(raw[0], list):
+                # 이미 2D
+                data = raw
+            else:
+                # 1D 리스트: 단일 행 또는 단일 열 구분
+                rows, cols = rng.shape
+                if rows > 1 and cols == 1:
+                    # 단일 열 → 각 값을 행으로
+                    data = [[v] for v in raw]
+                else:
+                    # 단일 행
+                    data = [raw]
 
             return ActionResult(
                 success=True,
@@ -128,12 +222,11 @@ class WriteDataHandler(ActionHandler):
 
         try:
             wb = ctx.get_workbook(target_file)
-            ws = wb[target_sheet]
+            ws = wb.sheets[target_sheet]
 
             # 시작 셀 파싱
-            from openpyxl.utils.cell import coordinate_from_string
-            col_letter, start_row = coordinate_from_string(target_start)
-            start_col = column_index_from_string(col_letter)
+            col_letter, start_row = _parse_coordinate(target_start)
+            start_col = _col_letter_to_index(col_letter)
 
             if not isinstance(source, list) or len(source) == 0:
                 return ActionResult(
@@ -149,27 +242,17 @@ class WriteDataHandler(ActionHandler):
                     if column_mapping:
                         # 매핑 기반 쓰기
                         for src_col, tgt_col_letter in column_mapping.items():
-                            tgt_col_idx = column_index_from_string(tgt_col_letter)
-                            ws.cell(
-                                row=current_row,
-                                column=tgt_col_idx,
-                                value=row_data.get(src_col),
+                            tgt_col_idx = _col_letter_to_index(tgt_col_letter)
+                            ws.range((current_row, tgt_col_idx)).value = row_data.get(
+                                src_col
                             )
                     else:
                         # 순서대로 쓰기
                         for j, value in enumerate(row_data.values()):
-                            ws.cell(
-                                row=current_row,
-                                column=start_col + j,
-                                value=value,
-                            )
+                            ws.range((current_row, start_col + j)).value = value
                 elif isinstance(row_data, (list, tuple)):
                     for j, value in enumerate(row_data):
-                        ws.cell(
-                            row=current_row,
-                            column=start_col + j,
-                            value=value,
-                        )
+                        ws.range((current_row, start_col + j)).value = value
 
                 rows_written += 1
 
@@ -198,14 +281,24 @@ class ClearRangeHandler(ActionHandler):
 
         try:
             wb = ctx.get_workbook(alias)
-            ws = wb[sheet_name]
+            ws = wb.sheets[sheet_name]
 
+            rng = ws.range(cell_range)
+
+            # 클리어 전 비어있지 않은 셀 수 세기
+            raw = rng.value
             cells_cleared = 0
-            for row in ws[cell_range]:
-                for cell in row:
-                    if cell.value is not None:
-                        cell.value = None
-                        cells_cleared += 1
+            if raw is not None:
+                if isinstance(raw, list):
+                    for item in raw:
+                        if isinstance(item, list):
+                            cells_cleared += sum(1 for v in item if v is not None)
+                        elif item is not None:
+                            cells_cleared += 1
+                else:
+                    cells_cleared = 1
+
+            rng.clear_contents()
 
             return ActionResult(
                 success=True,
@@ -222,9 +315,7 @@ class RecalculateHandler(ActionHandler):
     params:
         file: 워크북 alias
 
-    Note: openpyxl은 수식 재계산을 직접 수행하지 못한다.
-    이 핸들러는 워크북을 저장하여 Excel에서 열 때 재계산되도록 한다.
-    수식 결과를 프로그래밍적으로 계산하려면 xlcalc 등 별도 라이브러리가 필요하다.
+    Note: xlwings는 Excel 엔진을 통해 실제 수식 재계산을 수행한다.
     """
 
     def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
@@ -232,11 +323,235 @@ class RecalculateHandler(ActionHandler):
 
         try:
             wb = ctx.get_workbook(alias)
-            # calcChain 초기화 → Excel이 열 때 전체 재계산
-            wb.calculation.calcMode = "auto"
+            wb.app.calculation = "automatic"
+            wb.app.calculate()
             return ActionResult(
                 success=True,
-                message=f"재계산 플래그 설정 완료: {alias} (Excel 열 때 재계산됨)",
+                message=f"수식 재계산 완료: {alias}",
             )
         except Exception as e:
             return ActionResult(success=False, error=f"RECALCULATE 실패: {e}")
+
+
+class FindDateColumnHandler(ActionHandler):
+    """FIND_DATE_COLUMN: 시트에서 날짜 패턴을 탐색하여 대상 열을 결정한다.
+
+    지정된 scan_range 내에서 날짜 값이 있는 셀을 찾고,
+    날짜가 가장 많은 행을 date_header_row로 결정한다.
+    오늘 날짜와 매칭되는 열이 있으면 해당 열을,
+    없으면 마지막 날짜 다음 열을 추론하여 반환한다.
+
+    params:
+        workbook: 워크북 alias
+        sheet: 시트명
+        scan_range: 날짜를 탐색할 셀 범위 (예: "A1:ZZ10")
+        date: 대상 날짜 ("today" 또는 "YYYY-MM-DD")
+
+    returns (store_as):
+        column: 대상 열 문자 (예: "CP")
+        date_row: 날짜가 발견된 행 번호
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        sheet_name = params.get("sheet", "")
+        scan_range = params.get("scan_range", "A1:ZZ10")
+        date_str = params.get("date", "today")
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws = wb.sheets[sheet_name]
+
+            # 대상 날짜 결정
+            target_date = date.today() if date_str == "today" else date.fromisoformat(date_str)
+
+            # scan_range 읽기
+            rng = ws.range(scan_range)
+            raw = rng.value
+            if raw is None:
+                return ActionResult(success=False, error="scan_range가 비어있습니다.")
+
+            # 2D 리스트로 정규화
+            if not isinstance(raw, list):
+                raw = [[raw]]
+            elif not isinstance(raw[0], list):
+                raw = [raw]
+
+            start_row = rng.row
+            start_col = rng.column
+
+            # 행별 날짜 셀 수집: {row: [(col_idx, date), ...]}
+            date_cells_by_row: dict[int, list[tuple[int, date]]] = {}
+            for r_offset, row_data in enumerate(raw):
+                actual_row = start_row + r_offset
+                if row_data is None:
+                    continue
+                dates_in_row: list[tuple[int, date]] = []
+                for c_offset, cell_val in enumerate(row_data):
+                    actual_col = start_col + c_offset
+                    parsed = _try_parse_date(cell_val, year=target_date.year)
+                    if parsed is not None:
+                        dates_in_row.append((actual_col, parsed))
+                if dates_in_row:
+                    date_cells_by_row[actual_row] = dates_in_row
+
+            if not date_cells_by_row:
+                return ActionResult(
+                    success=False,
+                    error="scan_range에서 날짜를 찾을 수 없습니다.",
+                )
+
+            # 날짜가 가장 많은 행 = date header row
+            date_row = max(date_cells_by_row, key=lambda r: len(date_cells_by_row[r]))
+            date_cells = sorted(date_cells_by_row[date_row], key=lambda x: x[0])
+
+            # 오늘 날짜 정확히 매칭
+            for col_idx, d in date_cells:
+                if d == target_date:
+                    col_letter = _col_index_to_letter(col_idx)
+                    return ActionResult(
+                        success=True,
+                        data={"column": col_letter, "date_row": date_row},
+                        message=f"날짜({target_date}) 발견: {col_letter}{date_row}",
+                    )
+
+            # 매칭 실패 → 패턴 기반 추론
+            last_col_idx, last_date = date_cells[-1]
+            days_gap = (target_date - last_date).days
+
+            if days_gap <= 0:
+                return ActionResult(
+                    success=False,
+                    error=(
+                        f"대상 날짜({target_date})가 마지막 날짜({last_date})보다 "
+                        f"이전이거나 같습니다."
+                    ),
+                )
+
+            # 열 간격 패턴 감지 (기본: 1일 = 1열)
+            col_per_day = 1.0
+            if len(date_cells) >= 2:
+                col_intervals = [
+                    date_cells[i][0] - date_cells[i - 1][0]
+                    for i in range(1, len(date_cells))
+                ]
+                day_intervals = [
+                    (date_cells[i][1] - date_cells[i - 1][1]).days
+                    for i in range(1, len(date_cells))
+                ]
+                # 가장 빈번한 패턴 사용
+                if day_intervals and all(d > 0 for d in day_intervals):
+                    typical_col = max(set(col_intervals), key=col_intervals.count)
+                    typical_day = max(set(day_intervals), key=day_intervals.count)
+                    if typical_day > 0:
+                        col_per_day = typical_col / typical_day
+
+            next_col_idx = last_col_idx + round(days_gap * col_per_day)
+            col_letter = _col_index_to_letter(next_col_idx)
+
+            if days_gap > 7:
+                logger.warning(
+                    "마지막 날짜(%s)와 대상 날짜(%s) 간격이 %d일입니다.",
+                    last_date, target_date, days_gap,
+                )
+
+            return ActionResult(
+                success=True,
+                data={"column": col_letter, "date_row": date_row},
+                message=(
+                    f"날짜({target_date}) 열 추론: {col_letter}{date_row} "
+                    f"(마지막: {last_date}→{_col_index_to_letter(last_col_idx)}열)"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"FIND_DATE_COLUMN 실패: {e}")
+
+
+class CopyRangeHandler(ActionHandler):
+    """COPY_RANGE: 시트 간 범위 복사 (값 또는 수식).
+
+    같은 워크북 내에서 소스 시트의 범위를 읽어
+    타겟 시트의 지정 열/행에 붙여넣는다.
+    paste_type=values이면 수식의 계산 결과(값)만 복사한다.
+
+    params:
+        workbook: 워크북 alias
+        source_sheet: 소스 시트명
+        source_range: 소스 범위 (예: "D7:D48")
+        target_sheet: 타겟 시트명
+        target_column: 타겟 열 문자 (예: "CP")
+        target_start_row: 타겟 기준 행 (date_row 등)
+        row_offset: 기준 행에서의 오프셋 (기본: 0)
+        paste_type: 붙여넣기 유형 ("values" | "formulas" | "all", 기본: "values")
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        source_sheet = params.get("source_sheet", "")
+        source_range = params.get("source_range", "")
+        target_sheet = params.get("target_sheet", "")
+        target_column = params.get("target_column", "")
+        target_start_row = params.get("target_start_row", 1)
+        row_offset = params.get("row_offset", 0)
+        paste_type = params.get("paste_type", "values")
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws_src = wb.sheets[source_sheet]
+            ws_tgt = wb.sheets[target_sheet]
+
+            src_rng = ws_src.range(source_range)
+
+            # 소스 데이터 읽기
+            if paste_type == "formulas":
+                raw = src_rng.formula
+            else:
+                raw = src_rng.value  # 계산된 값
+
+            # 소스 범위 행/열 수 파악
+            src_rows, src_cols = src_rng.shape
+
+            # 데이터를 2D 리스트로 정규화
+            # xlwings는 단일 셀 → scalar, 단일 열 → 1D list, 다중 열 → 2D list 반환
+            if not isinstance(raw, list):
+                # 단일 셀
+                values_2d: list[list] = [[raw]]
+            elif src_rows == 1 and src_cols > 1:
+                # 단일 행: 1D list → 1행 2D
+                values_2d = [raw]
+            elif src_cols == 1:
+                # 단일 열: 1D list → 열 벡터 2D
+                values_2d = [[v] for v in raw]
+            else:
+                # 이미 2D
+                values_2d = raw
+
+            num_rows = len(values_2d)
+            num_cols_out = len(values_2d[0]) if values_2d else 1
+
+            # 타겟 시작 위치 계산
+            actual_start_row = int(target_start_row) + int(row_offset)
+            target_col_idx = _col_letter_to_index(target_column)
+
+            # 타겟 범위 설정
+            tgt_rng = ws_tgt.range(
+                (actual_start_row, target_col_idx),
+                (actual_start_row + num_rows - 1, target_col_idx + num_cols_out - 1),
+            )
+
+            if paste_type == "formulas":
+                tgt_rng.formula = values_2d
+            else:
+                tgt_rng.value = values_2d
+
+            return ActionResult(
+                success=True,
+                data={"rows_copied": num_rows},
+                message=(
+                    f"복사 완료: {source_sheet}!{source_range} → "
+                    f"{target_sheet}!{target_column}{actual_start_row} "
+                    f"({num_rows}행, {paste_type})"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"COPY_RANGE 실패: {e}")

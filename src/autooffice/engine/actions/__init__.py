@@ -6,6 +6,8 @@
 from autooffice.engine.actions.base import ActionHandler
 from autooffice.engine.actions.file_actions import OpenFileHandler, SaveFileHandler
 from autooffice.engine.actions.excel_actions import (
+    CopyRangeHandler,
+    FindDateColumnHandler,
     ReadColumnsHandler,
     ReadRangeHandler,
     WriteDataHandler,
@@ -28,6 +30,8 @@ def build_default_registry() -> dict[str, ActionHandler]:
         "WRITE_DATA": WriteDataHandler(),
         "CLEAR_RANGE": ClearRangeHandler(),
         "RECALCULATE": RecalculateHandler(),
+        "FIND_DATE_COLUMN": FindDateColumnHandler(),
+        "COPY_RANGE": CopyRangeHandler(),
         "VALIDATE": ValidateHandler(),
         "FORMAT_MESSAGE": FormatMessageHandler(),
         "SEND_MESSENGER": SendMessengerHandler(),
