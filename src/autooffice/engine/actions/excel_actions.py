@@ -465,3 +465,93 @@ class FindDateColumnHandler(ActionHandler):
             )
         except Exception as e:
             return ActionResult(success=False, error=f"FIND_DATE_COLUMN 실패: {e}")
+
+
+class CopyRangeHandler(ActionHandler):
+    """COPY_RANGE: 시트 간 범위 복사 (값 또는 수식).
+
+    같은 워크북 내에서 소스 시트의 범위를 읽어
+    타겟 시트의 지정 열/행에 붙여넣는다.
+    paste_type=values이면 수식의 계산 결과(값)만 복사한다.
+
+    params:
+        workbook: 워크북 alias
+        source_sheet: 소스 시트명
+        source_range: 소스 범위 (예: "D7:D48")
+        target_sheet: 타겟 시트명
+        target_column: 타겟 열 문자 (예: "CP")
+        target_start_row: 타겟 기준 행 (date_row 등)
+        row_offset: 기준 행에서의 오프셋 (기본: 0)
+        paste_type: 붙여넣기 유형 ("values" | "formulas" | "all", 기본: "values")
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        source_sheet = params.get("source_sheet", "")
+        source_range = params.get("source_range", "")
+        target_sheet = params.get("target_sheet", "")
+        target_column = params.get("target_column", "")
+        target_start_row = params.get("target_start_row", 1)
+        row_offset = params.get("row_offset", 0)
+        paste_type = params.get("paste_type", "values")
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws_src = wb.sheets[source_sheet]
+            ws_tgt = wb.sheets[target_sheet]
+
+            src_rng = ws_src.range(source_range)
+
+            # 소스 데이터 읽기
+            if paste_type == "formulas":
+                raw = src_rng.formula
+            else:
+                raw = src_rng.value  # 계산된 값
+
+            # 소스 범위 행/열 수 파악
+            src_rows, src_cols = src_rng.shape
+
+            # 데이터를 2D 리스트로 정규화
+            # xlwings는 단일 셀 → scalar, 단일 열 → 1D list, 다중 열 → 2D list 반환
+            if not isinstance(raw, list):
+                # 단일 셀
+                values_2d: list[list] = [[raw]]
+            elif src_rows == 1 and src_cols > 1:
+                # 단일 행: 1D list → 1행 2D
+                values_2d = [raw]
+            elif src_cols == 1:
+                # 단일 열: 1D list → 열 벡터 2D
+                values_2d = [[v] for v in raw]
+            else:
+                # 이미 2D
+                values_2d = raw
+
+            num_rows = len(values_2d)
+            num_cols_out = len(values_2d[0]) if values_2d else 1
+
+            # 타겟 시작 위치 계산
+            actual_start_row = int(target_start_row) + int(row_offset)
+            target_col_idx = _col_letter_to_index(target_column)
+
+            # 타겟 범위 설정
+            tgt_rng = ws_tgt.range(
+                (actual_start_row, target_col_idx),
+                (actual_start_row + num_rows - 1, target_col_idx + num_cols_out - 1),
+            )
+
+            if paste_type == "formulas":
+                tgt_rng.formula = values_2d
+            else:
+                tgt_rng.value = values_2d
+
+            return ActionResult(
+                success=True,
+                data={"rows_copied": num_rows},
+                message=(
+                    f"복사 완료: {source_sheet}!{source_range} → "
+                    f"{target_sheet}!{target_column}{actual_start_row} "
+                    f"({num_rows}행, {paste_type})"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"COPY_RANGE 실패: {e}")

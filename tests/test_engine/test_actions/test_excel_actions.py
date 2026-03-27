@@ -8,6 +8,7 @@ import xlwings as xw
 
 from autooffice.engine.actions.excel_actions import (
     ClearRangeHandler,
+    CopyRangeHandler,
     FindDateColumnHandler,
     ReadColumnsHandler,
     WriteDataHandler,
@@ -254,3 +255,135 @@ class TestFindDateColumn:
         )
 
         assert not result.success
+
+
+class TestCopyRange:
+    """COPY_RANGE: 시트 간 범위 복사 (값 붙여넣기)."""
+
+    def test_copy_values_between_sheets(self, engine_ctx, tmp_data_dir):
+        """source 시트의 범위를 target 시트의 열에 값으로 복사한다."""
+        wb = engine_ctx.app.books.add()
+
+        # 소스 시트: 수식이 있는 D7:D9
+        ws_src = wb.sheets[0]
+        ws_src.name = "자재계산식"
+        ws_src.range("D7").value = 100
+        ws_src.range("D8").value = 200
+        ws_src.range("D9").value = 300
+
+        # 타겟 시트
+        ws_tgt = wb.sheets.add("Sheet1", after=ws_src)
+
+        engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
+
+        handler = CopyRangeHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "source_sheet": "자재계산식",
+                "source_range": "D7:D9",
+                "target_sheet": "Sheet1",
+                "target_column": "F",
+                "target_start_row": 6,
+                "row_offset": 1,
+                "paste_type": "values",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["rows_copied"] == 3
+        # F7, F8, F9에 값이 복사됨 (target_start_row=6 + row_offset=1 = 7)
+        assert ws_tgt.range("F7").value == 100
+        assert ws_tgt.range("F8").value == 200
+        assert ws_tgt.range("F9").value == 300
+
+    def test_copy_overwrites_existing(self, engine_ctx, tmp_data_dir):
+        """기존 데이터가 있으면 덮어쓴다."""
+        wb = engine_ctx.app.books.add()
+        ws_src = wb.sheets[0]
+        ws_src.name = "source"
+        ws_src.range("A1").value = 999
+
+        ws_tgt = wb.sheets.add("target", after=ws_src)
+        ws_tgt.range("C5").value = "old_value"
+
+        engine_ctx.register_workbook("wb", wb, tmp_data_dir / "wb.xlsx")
+
+        handler = CopyRangeHandler()
+        result = handler.execute(
+            {
+                "workbook": "wb",
+                "source_sheet": "source",
+                "source_range": "A1:A1",
+                "target_sheet": "target",
+                "target_column": "C",
+                "target_start_row": 5,
+                "row_offset": 0,
+                "paste_type": "values",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert ws_tgt.range("C5").value == 999
+
+    def test_copy_default_row_offset(self, engine_ctx, tmp_data_dir):
+        """row_offset 미지정 시 기본값 0."""
+        wb = engine_ctx.app.books.add()
+        ws_src = wb.sheets[0]
+        ws_src.name = "src"
+        ws_src.range("B2").value = 42
+
+        ws_tgt = wb.sheets.add("tgt", after=ws_src)
+        engine_ctx.register_workbook("wb", wb, tmp_data_dir / "wb.xlsx")
+
+        handler = CopyRangeHandler()
+        result = handler.execute(
+            {
+                "workbook": "wb",
+                "source_sheet": "src",
+                "source_range": "B2:B2",
+                "target_sheet": "tgt",
+                "target_column": "A",
+                "target_start_row": 10,
+                "paste_type": "values",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert ws_tgt.range("A10").value == 42
+
+    def test_copy_multirow_source(self, engine_ctx, tmp_data_dir):
+        """다중 행 복사 (D7:D48 같은 42행 시나리오 축소판)."""
+        wb = engine_ctx.app.books.add()
+        ws_src = wb.sheets[0]
+        ws_src.name = "src"
+        # 10행 데이터
+        for i in range(10):
+            ws_src.range((1 + i, 1)).value = (i + 1) * 10
+
+        ws_tgt = wb.sheets.add("tgt", after=ws_src)
+        engine_ctx.register_workbook("wb", wb, tmp_data_dir / "wb.xlsx")
+
+        handler = CopyRangeHandler()
+        result = handler.execute(
+            {
+                "workbook": "wb",
+                "source_sheet": "src",
+                "source_range": "A1:A10",
+                "target_sheet": "tgt",
+                "target_column": "D",
+                "target_start_row": 3,
+                "row_offset": 2,
+                "paste_type": "values",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["rows_copied"] == 10
+        # D5 ~ D14 (start_row=3 + offset=2 = 5)
+        assert ws_tgt.range("D5").value == 10
+        assert ws_tgt.range("D14").value == 100
