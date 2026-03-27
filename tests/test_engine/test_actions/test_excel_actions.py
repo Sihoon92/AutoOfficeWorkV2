@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import xlwings as xw
 
@@ -138,9 +138,11 @@ class TestFindDateColumn:
     def test_exact_match_today(self, engine_ctx, tmp_data_dir):
         """오늘 날짜가 이미 존재하면 해당 열을 반환한다."""
         today = date.today()
+        d_minus_2 = today - timedelta(days=2)
+        d_minus_1 = today - timedelta(days=1)
         dates = [
-            f"{today.month}/{today.day - 2}",
-            f"{today.month}/{today.day - 1}",
+            f"{d_minus_2.month}/{d_minus_2.day}",
+            f"{d_minus_1.month}/{d_minus_1.day}",
             f"{today.month}/{today.day}",
         ]
         self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
@@ -164,9 +166,11 @@ class TestFindDateColumn:
     def test_infer_next_column(self, engine_ctx, tmp_data_dir):
         """오늘 날짜가 없으면 마지막 날짜 다음 열을 추론한다."""
         today = date.today()
+        d_minus_2 = today - timedelta(days=2)
+        d_minus_1 = today - timedelta(days=1)
         dates = [
-            f"{today.month}/{today.day - 2}",
-            f"{today.month}/{today.day - 1}",
+            f"{d_minus_2.month}/{d_minus_2.day}",
+            f"{d_minus_1.month}/{d_minus_1.day}",
         ]
         self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
 
@@ -208,8 +212,9 @@ class TestFindDateColumn:
     def test_datetime_cell_values(self, engine_ctx, tmp_data_dir):
         """Excel datetime 객체도 인식한다."""
         today = date.today()
+        yesterday = today - timedelta(days=1)
         dates = [
-            datetime(today.year, today.month, today.day - 1),
+            datetime(yesterday.year, yesterday.month, yesterday.day),
             datetime(today.year, today.month, today.day),
         ]
         self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
