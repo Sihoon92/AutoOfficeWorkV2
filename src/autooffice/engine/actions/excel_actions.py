@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date, datetime
 from typing import Any
 
 from autooffice.engine.actions.base import ActionHandler
@@ -31,6 +32,41 @@ def _parse_coordinate(coord: str) -> tuple[str, int]:
     if not match:
         raise ValueError(f"잘못된 셀 좌표: {coord}")
     return match.group(1).upper(), int(match.group(2))
+
+
+def _col_index_to_letter(idx: int) -> str:
+    """1-based 인덱스를 컬럼 문자로 변환: 1 -> 'A', 27 -> 'AA'."""
+    result: list[str] = []
+    while idx > 0:
+        idx, remainder = divmod(idx - 1, 26)
+        result.append(chr(remainder + ord("A")))
+    return "".join(reversed(result))
+
+
+def _try_parse_date(value: Any, year: int | None = None) -> date | None:
+    """셀 값을 date로 파싱 시도. 실패 시 None 반환.
+
+    지원 형식:
+    - datetime 객체 → date로 변환
+    - date 객체 → 그대로 반환
+    - 문자열 "M/D" 또는 "MM/DD" → 올해(또는 지정 연도) 기준 date 생성
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        match = re.match(r"^(\d{1,2})/(\d{1,2})$", value.strip())
+        if match:
+            month, day = int(match.group(1)), int(match.group(2))
+            y = year or date.today().year
+            try:
+                return date(y, month, day)
+            except ValueError:
+                return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -295,3 +331,137 @@ class RecalculateHandler(ActionHandler):
             )
         except Exception as e:
             return ActionResult(success=False, error=f"RECALCULATE 실패: {e}")
+
+
+class FindDateColumnHandler(ActionHandler):
+    """FIND_DATE_COLUMN: 시트에서 날짜 패턴을 탐색하여 대상 열을 결정한다.
+
+    지정된 scan_range 내에서 날짜 값이 있는 셀을 찾고,
+    날짜가 가장 많은 행을 date_header_row로 결정한다.
+    오늘 날짜와 매칭되는 열이 있으면 해당 열을,
+    없으면 마지막 날짜 다음 열을 추론하여 반환한다.
+
+    params:
+        workbook: 워크북 alias
+        sheet: 시트명
+        scan_range: 날짜를 탐색할 셀 범위 (예: "A1:ZZ10")
+        date: 대상 날짜 ("today" 또는 "YYYY-MM-DD")
+
+    returns (store_as):
+        column: 대상 열 문자 (예: "CP")
+        date_row: 날짜가 발견된 행 번호
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        sheet_name = params.get("sheet", "")
+        scan_range = params.get("scan_range", "A1:ZZ10")
+        date_str = params.get("date", "today")
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws = wb.sheets[sheet_name]
+
+            # 대상 날짜 결정
+            target_date = date.today() if date_str == "today" else date.fromisoformat(date_str)
+
+            # scan_range 읽기
+            rng = ws.range(scan_range)
+            raw = rng.value
+            if raw is None:
+                return ActionResult(success=False, error="scan_range가 비어있습니다.")
+
+            # 2D 리스트로 정규화
+            if not isinstance(raw, list):
+                raw = [[raw]]
+            elif not isinstance(raw[0], list):
+                raw = [raw]
+
+            start_row = rng.row
+            start_col = rng.column
+
+            # 행별 날짜 셀 수집: {row: [(col_idx, date), ...]}
+            date_cells_by_row: dict[int, list[tuple[int, date]]] = {}
+            for r_offset, row_data in enumerate(raw):
+                actual_row = start_row + r_offset
+                if row_data is None:
+                    continue
+                dates_in_row: list[tuple[int, date]] = []
+                for c_offset, cell_val in enumerate(row_data):
+                    actual_col = start_col + c_offset
+                    parsed = _try_parse_date(cell_val, year=target_date.year)
+                    if parsed is not None:
+                        dates_in_row.append((actual_col, parsed))
+                if dates_in_row:
+                    date_cells_by_row[actual_row] = dates_in_row
+
+            if not date_cells_by_row:
+                return ActionResult(
+                    success=False,
+                    error="scan_range에서 날짜를 찾을 수 없습니다.",
+                )
+
+            # 날짜가 가장 많은 행 = date header row
+            date_row = max(date_cells_by_row, key=lambda r: len(date_cells_by_row[r]))
+            date_cells = sorted(date_cells_by_row[date_row], key=lambda x: x[0])
+
+            # 오늘 날짜 정확히 매칭
+            for col_idx, d in date_cells:
+                if d == target_date:
+                    col_letter = _col_index_to_letter(col_idx)
+                    return ActionResult(
+                        success=True,
+                        data={"column": col_letter, "date_row": date_row},
+                        message=f"날짜({target_date}) 발견: {col_letter}{date_row}",
+                    )
+
+            # 매칭 실패 → 패턴 기반 추론
+            last_col_idx, last_date = date_cells[-1]
+            days_gap = (target_date - last_date).days
+
+            if days_gap <= 0:
+                return ActionResult(
+                    success=False,
+                    error=(
+                        f"대상 날짜({target_date})가 마지막 날짜({last_date})보다 "
+                        f"이전이거나 같습니다."
+                    ),
+                )
+
+            # 열 간격 패턴 감지 (기본: 1일 = 1열)
+            col_per_day = 1.0
+            if len(date_cells) >= 2:
+                col_intervals = [
+                    date_cells[i][0] - date_cells[i - 1][0]
+                    for i in range(1, len(date_cells))
+                ]
+                day_intervals = [
+                    (date_cells[i][1] - date_cells[i - 1][1]).days
+                    for i in range(1, len(date_cells))
+                ]
+                # 가장 빈번한 패턴 사용
+                if day_intervals and all(d > 0 for d in day_intervals):
+                    typical_col = max(set(col_intervals), key=col_intervals.count)
+                    typical_day = max(set(day_intervals), key=day_intervals.count)
+                    if typical_day > 0:
+                        col_per_day = typical_col / typical_day
+
+            next_col_idx = last_col_idx + round(days_gap * col_per_day)
+            col_letter = _col_index_to_letter(next_col_idx)
+
+            if days_gap > 7:
+                logger.warning(
+                    "마지막 날짜(%s)와 대상 날짜(%s) 간격이 %d일입니다.",
+                    last_date, target_date, days_gap,
+                )
+
+            return ActionResult(
+                success=True,
+                data={"column": col_letter, "date_row": date_row},
+                message=(
+                    f"날짜({target_date}) 열 추론: {col_letter}{date_row} "
+                    f"(마지막: {last_date}→{_col_index_to_letter(last_col_idx)}열)"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"FIND_DATE_COLUMN 실패: {e}")

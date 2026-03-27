@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import xlwings as xw
 
 from autooffice.engine.actions.excel_actions import (
     ClearRangeHandler,
+    FindDateColumnHandler,
     ReadColumnsHandler,
     WriteDataHandler,
 )
@@ -109,3 +112,140 @@ class TestClearRange:
         assert ws.range((1, 1)).value == "헤더"  # 보존
         assert ws.range((2, 1)).value is None  # 클리어됨
         assert ws.range((3, 1)).value is None  # 클리어됨
+
+
+class TestFindDateColumn:
+    """FIND_DATE_COLUMN: 시트에서 날짜 패턴을 탐색하여 오늘 날짜 열을 결정."""
+
+    def _make_date_sheet(self, engine_ctx, tmp_data_dir, dates_in_row6):
+        """날짜 패턴이 있는 테스트 워크북 생성 헬퍼.
+
+        Args:
+            dates_in_row6: row 6에 넣을 날짜 값 리스트.
+                           Col A,B는 빈 헤더, Col C부터 날짜 시작.
+        """
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "Sheet1"
+
+        # 행 6, C열부터 날짜 배치
+        for i, d in enumerate(dates_in_row6):
+            ws.range((6, 3 + i)).value = d  # C=3, D=4, ...
+
+        engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
+        return wb, ws
+
+    def test_exact_match_today(self, engine_ctx, tmp_data_dir):
+        """오늘 날짜가 이미 존재하면 해당 열을 반환한다."""
+        today = date.today()
+        dates = [
+            f"{today.month}/{today.day - 2}",
+            f"{today.month}/{today.day - 1}",
+            f"{today.month}/{today.day}",
+        ]
+        self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["date_row"] == 6
+        # C=3번째 열 + 2(오프셋) = E열
+        assert result.data["column"] == "E"
+
+    def test_infer_next_column(self, engine_ctx, tmp_data_dir):
+        """오늘 날짜가 없으면 마지막 날짜 다음 열을 추론한다."""
+        today = date.today()
+        dates = [
+            f"{today.month}/{today.day - 2}",
+            f"{today.month}/{today.day - 1}",
+        ]
+        self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["date_row"] == 6
+        # C, D에 날짜 → 다음 빈 열 E
+        assert result.data["column"] == "E"
+
+    def test_explicit_date_param(self, engine_ctx, tmp_data_dir):
+        """date 파라미터로 명시적 날짜를 지정할 수 있다."""
+        self._make_date_sheet(engine_ctx, tmp_data_dir, ["3/21", "3/22"])
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "2026-03-22",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["column"] == "D"  # 3/22는 D열 (C=3/21, D=3/22)
+        assert result.data["date_row"] == 6
+
+    def test_datetime_cell_values(self, engine_ctx, tmp_data_dir):
+        """Excel datetime 객체도 인식한다."""
+        today = date.today()
+        dates = [
+            datetime(today.year, today.month, today.day - 1),
+            datetime(today.year, today.month, today.day),
+        ]
+        self._make_date_sheet(engine_ctx, tmp_data_dir, dates)
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["column"] == "D"  # 오늘 날짜가 D열에 있음
+
+    def test_no_dates_found(self, engine_ctx, tmp_data_dir):
+        """날짜를 찾을 수 없으면 실패."""
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "Sheet1"
+        ws.range("A1").value = "제목"
+        ws.range("B1").value = "항목"
+        engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert not result.success
