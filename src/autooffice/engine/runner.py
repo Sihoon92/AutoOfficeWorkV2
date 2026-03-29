@@ -196,8 +196,19 @@ class PlanRunner:
         condition = expect.condition
         expected_value = expect.value
 
-        if condition == "row_count_gt" and isinstance(result.data, list):
-            return len(result.data) > expected_value
+        if condition == "row_count_gt":
+            if isinstance(result.data, list):
+                return len(result.data) > expected_value
+            if isinstance(result.data, dict):
+                # COPY_RANGE → rows_copied, WRITE_DATA → rows_written 등
+                count = (
+                    result.data.get("rows_copied")
+                    or result.data.get("rows_written")
+                    or result.data.get("row_count")
+                )
+                if count is not None:
+                    return count > expected_value
+            return False
         if condition == "not_empty":
             return result.data is not None and result.data != []
         if condition == "equals":

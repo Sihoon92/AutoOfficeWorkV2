@@ -12,6 +12,7 @@ from autooffice.engine.actions.excel_actions import (
     FindDateColumnHandler,
     ReadColumnsHandler,
     WriteDataHandler,
+    _try_parse_date,
 )
 from autooffice.engine.context import EngineContext
 
@@ -486,3 +487,148 @@ class TestFindDateColumnCopyRangeIntegration:
         assert ws.range("E6").value == 22.3
         assert ws.range("E7").value == 33.7
         wb2.close()
+
+
+class TestTryParseDate:
+    """_try_parse_date 유틸 함수의 다양한 날짜 형식 파싱 테스트."""
+
+    def test_none(self):
+        assert _try_parse_date(None) is None
+
+    def test_datetime_object(self):
+        dt = datetime(2026, 3, 29, 10, 30)
+        assert _try_parse_date(dt) == date(2026, 3, 29)
+
+    def test_date_object(self):
+        d = date(2026, 3, 29)
+        assert _try_parse_date(d) == date(2026, 3, 29)
+
+    def test_slash_format(self):
+        assert _try_parse_date("3/29", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("03/29", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("12/1", year=2026) == date(2026, 12, 1)
+
+    def test_hyphen_format(self):
+        assert _try_parse_date("3-29", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("03-29", year=2026) == date(2026, 3, 29)
+
+    def test_dot_format(self):
+        assert _try_parse_date("3.29", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("03.29", year=2026) == date(2026, 3, 29)
+
+    def test_full_date_string(self):
+        assert _try_parse_date("2026-03-29") == date(2026, 3, 29)
+        assert _try_parse_date("2026/03/29") == date(2026, 3, 29)
+        assert _try_parse_date("2026.03.29") == date(2026, 3, 29)
+
+    def test_korean_format(self):
+        assert _try_parse_date("3월29일", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("3월 29일", year=2026) == date(2026, 3, 29)
+        assert _try_parse_date("03월29일", year=2026) == date(2026, 3, 29)
+
+    def test_invalid_values(self):
+        assert _try_parse_date("abc") is None
+        assert _try_parse_date("") is None
+        assert _try_parse_date("13/32", year=2026) is None  # 잘못된 월/일
+        assert _try_parse_date(0) is None  # 시리얼 범위 밖
+        assert _try_parse_date(-1) is None
+
+    def test_excel_serial_date(self):
+        # 2026-03-29 = serial 46110 (Excel 1900 날짜 체계, epoch=1899-12-30)
+        result = _try_parse_date(46110)
+        assert result == date(2026, 3, 29)
+
+
+class TestFindDateColumnFormats:
+    """FIND_DATE_COLUMN: 다양한 날짜 형식 자동 감지."""
+
+    def test_hyphen_format_dates(self, engine_ctx, tmp_data_dir):
+        """하이픈 형식 날짜 (3-27, 3-28) 감지."""
+        today = date.today()
+        d_minus_2 = today - timedelta(days=2)
+        d_minus_1 = today - timedelta(days=1)
+
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "Sheet1"
+        ws.range("C3").value = f"{d_minus_2.month}-{d_minus_2.day}"
+        ws.range("D3").value = f"{d_minus_1.month}-{d_minus_1.day}"
+        engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["date_row"] == 3
+        assert result.data["column"] == "E"
+
+    def test_korean_format_dates(self, engine_ctx, tmp_data_dir):
+        """한국어 형식 날짜 (3월27일, 3월28일) 감지."""
+        today = date.today()
+        d_minus_1 = today - timedelta(days=1)
+
+        wb = engine_ctx.app.books.add()
+        ws = wb.sheets[0]
+        ws.name = "Sheet1"
+        ws.range("C3").value = f"{d_minus_1.month}월{d_minus_1.day}일"
+        ws.range("D3").value = f"{today.month}월{today.day}일"
+        engine_ctx.register_workbook("target", wb, tmp_data_dir / "target.xlsx")
+
+        handler = FindDateColumnHandler()
+        result = handler.execute(
+            {
+                "workbook": "target",
+                "sheet": "Sheet1",
+                "scan_range": "A1:Z10",
+                "date": "today",
+            },
+            engine_ctx,
+        )
+
+        assert result.success
+        assert result.data["column"] == "D"
+
+
+class TestCheckExpectRowCountGt:
+    """_check_expect의 row_count_gt 조건이 dict 결과에도 동작하는지 테스트."""
+
+    def test_row_count_gt_with_dict_rows_copied(self, runner):
+        """COPY_RANGE 결과(dict)에서 row_count_gt가 올바르게 동작한다."""
+        from autooffice.models.action_result import ActionResult
+        from autooffice.models.execution_plan import Expect
+
+        expect = Expect(condition="row_count_gt", value=0)
+        result = ActionResult(success=True, data={"rows_copied": 42})
+        assert runner._check_expect(expect, result, None) is True
+
+        expect_high = Expect(condition="row_count_gt", value=50)
+        assert runner._check_expect(expect_high, result, None) is False
+
+    def test_row_count_gt_with_dict_rows_written(self, runner):
+        """WRITE_DATA 결과(dict)에서도 row_count_gt가 동작한다."""
+        from autooffice.models.action_result import ActionResult
+        from autooffice.models.execution_plan import Expect
+
+        expect = Expect(condition="row_count_gt", value=1)
+        result = ActionResult(success=True, data={"rows_written": 10})
+        assert runner._check_expect(expect, result, None) is True
+
+    def test_row_count_gt_with_list(self, runner):
+        """기존 list 결과에서도 여전히 동작한다."""
+        from autooffice.models.action_result import ActionResult
+        from autooffice.models.execution_plan import Expect
+
+        expect = Expect(condition="row_count_gt", value=2)
+        result = ActionResult(success=True, data=[1, 2, 3])
+        assert runner._check_expect(expect, result, None) is True
+
+        result_small = ActionResult(success=True, data=[1])
+        assert runner._check_expect(expect, result_small, None) is False

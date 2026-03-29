@@ -46,10 +46,18 @@ def _col_index_to_letter(idx: int) -> str:
 def _try_parse_date(value: Any, year: int | None = None) -> date | None:
     """셀 값을 date로 파싱 시도. 실패 시 None 반환.
 
+    인접 셀의 형식(type)을 자동 감지하여 다양한 날짜 표현을 인식한다.
+
     지원 형식:
     - datetime 객체 → date로 변환
     - date 객체 → 그대로 반환
-    - 문자열 "M/D" 또는 "MM/DD" → 올해(또는 지정 연도) 기준 date 생성
+    - float/int (Excel 시리얼 날짜) → date 변환 (1~2958465 범위)
+    - 문자열 형식:
+      - "M/D", "MM/DD" (슬래시 구분)
+      - "M-D", "MM-DD" (하이픈 구분)
+      - "M.D", "MM.DD" (점 구분)
+      - "YYYY-MM-DD", "YYYY/MM/DD", "YYYY.MM.DD" (연도 포함)
+      - "M월D일", "MM월DD일" (한국어)
     """
     if value is None:
         return None
@@ -57,15 +65,45 @@ def _try_parse_date(value: Any, year: int | None = None) -> date | None:
         return value.date()
     if isinstance(value, date):
         return value
+
+    # Excel 시리얼 날짜 (float/int)
+    if isinstance(value, (int, float)) and 1 <= value <= 2958465:
+        try:
+            # Excel epoch: 1899-12-30 (1900 날짜 체계, Lotus 1-2-3 호환 버그 포함)
+            from datetime import timedelta
+            excel_epoch = date(1899, 12, 30)
+            return excel_epoch + timedelta(days=int(value))
+        except (ValueError, OverflowError):
+            return None
+
     if isinstance(value, str):
-        match = re.match(r"^(\d{1,2})/(\d{1,2})$", value.strip())
-        if match:
-            month, day = int(match.group(1)), int(match.group(2))
-            y = year or date.today().year
+        s = value.strip()
+        y = year or date.today().year
+
+        # "YYYY-MM-DD" / "YYYY/MM/DD" / "YYYY.MM.DD"
+        m = re.match(r"^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$", s)
+        if m:
             try:
-                return date(y, month, day)
+                return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
             except ValueError:
                 return None
+
+        # "M/D" / "M-D" / "M.D" (연도 없는 형식)
+        m = re.match(r"^(\d{1,2})[/\-.](\d{1,2})$", s)
+        if m:
+            try:
+                return date(y, int(m.group(1)), int(m.group(2)))
+            except ValueError:
+                return None
+
+        # "M월D일" / "M월 D일" (한국어 형식)
+        m = re.match(r"^(\d{1,2})\s*월\s*(\d{1,2})\s*일$", s)
+        if m:
+            try:
+                return date(y, int(m.group(1)), int(m.group(2)))
+            except ValueError:
+                return None
+
     return None
 
 

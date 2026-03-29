@@ -193,7 +193,12 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 - `column`: 대상 날짜의 열 문자
 - `date_row`: 날짜가 발견된 행 번호
 
-**날짜 인식 형식**: Excel datetime 객체, `"M/D"` 또는 `"MM/DD"` 문자열
+**날짜 인식 형식** (인접 셀의 형식을 자동 감지):
+- Excel datetime/date 객체
+- Excel 시리얼 날짜 (숫자)
+- 문자열: `"M/D"`, `"M-D"`, `"M.D"` (연도 없는 형식, 올해 기준)
+- 문자열: `"YYYY-MM-DD"`, `"YYYY/MM/DD"`, `"YYYY.MM.DD"` (연도 포함)
+- 한국어: `"M월D일"`, `"M월 D일"`
 
 **동작 방식**:
 1. scan_range 내 날짜 셀 스캔
