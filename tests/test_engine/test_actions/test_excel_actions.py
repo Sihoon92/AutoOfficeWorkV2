@@ -155,7 +155,7 @@ class TestFindDateColumn:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )
@@ -182,7 +182,7 @@ class TestFindDateColumn:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )
@@ -227,7 +227,7 @@ class TestFindDateColumn:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )
@@ -250,7 +250,7 @@ class TestFindDateColumn:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )
@@ -440,7 +440,7 @@ class TestFindDateColumnCopyRangeIntegration:
                         "workbook": "material",
                         "sheet": "Sheet1",
                         "scan_range": "A1:ZZ10",
-                        "date": "today",
+                        "date": date.today().isoformat(),
                     },
                     "store_as": "date_info",
                 },
@@ -561,7 +561,7 @@ class TestFindDateColumnFormats:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )
@@ -588,7 +588,7 @@ class TestFindDateColumnFormats:
                 "workbook": "target",
                 "sheet": "Sheet1",
                 "scan_range": "A1:Z10",
-                "date": "today",
+                "date": date.today().isoformat(),
             },
             engine_ctx,
         )

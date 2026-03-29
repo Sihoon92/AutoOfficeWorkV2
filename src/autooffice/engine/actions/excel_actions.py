@@ -383,7 +383,7 @@ class FindDateColumnHandler(ActionHandler):
         workbook: 워크북 alias
         sheet: 시트명
         scan_range: 날짜를 탐색할 셀 범위 (예: "A1:ZZ10")
-        date: 대상 날짜 ("today" 또는 "YYYY-MM-DD")
+        date: 대상 날짜 (ISO 형식 "YYYY-MM-DD", 예: "2026-03-29")
 
     returns (store_as):
         column: 대상 열 문자 (예: "CP")
@@ -394,14 +394,25 @@ class FindDateColumnHandler(ActionHandler):
         workbook = params.get("workbook", "")
         sheet_name = params.get("sheet", "")
         scan_range = params.get("scan_range", "A1:ZZ10")
-        date_str = params.get("date", "today")
+        date_str = params.get("date", "")
+
+        if not date_str:
+            return ActionResult(
+                success=False,
+                error="date 파라미터가 필요합니다. ISO 형식(YYYY-MM-DD)으로 입력하세요.",
+            )
+
+        try:
+            target_date = date.fromisoformat(date_str)
+        except ValueError:
+            return ActionResult(
+                success=False,
+                error=f"date 형식 오류: '{date_str}'. ISO 형식(YYYY-MM-DD)으로 입력하세요.",
+            )
 
         try:
             wb = ctx.get_workbook(workbook)
             ws = wb.sheets[sheet_name]
-
-            # 대상 날짜 결정
-            target_date = date.today() if date_str == "today" else date.fromisoformat(date_str)
 
             # scan_range 읽기
             rng = ws.range(scan_range)
