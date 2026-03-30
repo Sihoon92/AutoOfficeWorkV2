@@ -14,10 +14,14 @@ import logging
 import sys
 from pathlib import Path
 
+import os
+
 import click
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 from autooffice.engine.actions import build_default_registry
 from autooffice.engine.context import EngineContext
@@ -41,7 +45,7 @@ def main(verbose: bool) -> None:
 @click.argument("plan_file", type=click.Path(exists=True))
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
 @click.option("--no-resolve", is_flag=True, default=False, help="동적 파라미터 해소 건너뛰기")
-@click.option("--llm-model", default="gpt-4o-mini", help="동적 파라미터 해소용 LLM 모델")
+@click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
 def run(plan_file: str, data: str, no_resolve: bool, llm_model: str) -> None:
     """execution_plan.json을 실행한다."""
     click.echo(f"plan 로드: {plan_file}")
@@ -144,7 +148,7 @@ def cache_list() -> None:
 @cache.command("run")
 @click.argument("plan_id")
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
-@click.option("--llm-model", default="gpt-4o-mini", help="동적 파라미터 해소용 LLM 모델")
+@click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
 def cache_run(plan_id: str, data: str, llm_model: str) -> None:
     """캐시된 plan을 실행한다."""
     from autooffice.cache.plan_cache import PlanCache
