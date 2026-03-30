@@ -41,6 +41,33 @@ class OnFailAction(str, Enum):
     WARN_AND_CONTINUE = "WARN_AND_CONTINUE"
 
 
+class DynamicParamType(str, Enum):
+    """동적 파라미터 유형.
+
+    - date: 날짜 (BuiltinResolver로 LLM 없이 해소 가능)
+    - lookup: 구조적 조회 (LLM이 템플릿 구조를 기반으로 계산, JSON 반환)
+    - text: 단순 텍스트 (LLM 해소)
+    """
+
+    DATE = "date"
+    LOOKUP = "lookup"
+    TEXT = "text"
+
+
+class DynamicParamSpec(BaseModel):
+    """동적 파라미터 선언.
+
+    Claude가 plan 생성 시 실행 시점마다 바뀌는 값을 선언한다.
+    런타임에 resolver가 이 선언을 읽어 실제 값으로 해소한다.
+    """
+
+    type: DynamicParamType = DynamicParamType.TEXT
+    prompt: str = Field(description="resolver에게 전달할 해소 지시문 (자연어)")
+    format: str = Field(default="", description="기대 출력 형식 (예: YYYY-MM-DD, json)")
+    description: str = Field(default="", description="사람용 설명")
+    default: str | None = Field(default=None, description="해소 실패 시 기본값")
+
+
 class InputSpec(BaseModel):
     """입력 파일/데이터 정의."""
 
@@ -76,6 +103,7 @@ class PlanMetadata(BaseModel):
     task_type: str = ""
     template_hash: str = ""
     reusable: bool = True
+    has_dynamic_params: bool = False
 
 
 class FinalOutput(BaseModel):
@@ -98,6 +126,7 @@ class ExecutionPlan(BaseModel):
     created_at: datetime
     version: str = "1.0.0"
     metadata: PlanMetadata = Field(default_factory=PlanMetadata)
+    dynamic_params: dict[str, DynamicParamSpec] = Field(default_factory=dict)
     inputs: dict[str, InputSpec]
     steps: list[Step] = Field(min_length=1)
     final_output: FinalOutput

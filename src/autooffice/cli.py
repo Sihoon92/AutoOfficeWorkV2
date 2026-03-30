@@ -37,7 +37,9 @@ def main(verbose: bool) -> None:
 @main.command()
 @click.argument("plan_file", type=click.Path(exists=True))
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
-def run(plan_file: str, data: str) -> None:
+@click.option("--no-resolve", is_flag=True, default=False, help="동적 파라미터 해소 건너뛰기")
+@click.option("--llm-model", default="gpt-4o-mini", help="동적 파라미터 해소용 LLM 모델")
+def run(plan_file: str, data: str, no_resolve: bool, llm_model: str) -> None:
     """execution_plan.json을 실행한다."""
     click.echo(f"plan 로드: {plan_file}")
 
@@ -46,6 +48,18 @@ def run(plan_file: str, data: str) -> None:
     except Exception as e:
         click.echo(f"plan 파싱 실패: {e}", err=True)
         sys.exit(1)
+
+    # 동적 파라미터 해소
+    if not no_resolve and plan.dynamic_params:
+        from autooffice.engine.resolvers.chain import (
+            ChainResolver,
+            resolve_plan_dynamic_params,
+        )
+
+        click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
+        resolver = ChainResolver(llm_model=llm_model)
+        plan = resolve_plan_dynamic_params(plan, resolver)
+        click.echo("동적 파라미터 해소 완료")
 
     runner = PlanRunner(build_default_registry())
     ctx = EngineContext(data_dir=data)
@@ -127,7 +141,8 @@ def cache_list() -> None:
 @cache.command("run")
 @click.argument("plan_id")
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
-def cache_run(plan_id: str, data: str) -> None:
+@click.option("--llm-model", default="gpt-4o-mini", help="동적 파라미터 해소용 LLM 모델")
+def cache_run(plan_id: str, data: str, llm_model: str) -> None:
     """캐시된 plan을 실행한다."""
     from autooffice.cache.plan_cache import PlanCache
 
@@ -137,6 +152,17 @@ def cache_run(plan_id: str, data: str) -> None:
     if plan is None:
         click.echo(f"캐시에서 plan '{plan_id}'을 찾을 수 없습니다.", err=True)
         sys.exit(1)
+
+    # 동적 파라미터 해소
+    if plan.dynamic_params:
+        from autooffice.engine.resolvers.chain import (
+            ChainResolver,
+            resolve_plan_dynamic_params,
+        )
+
+        click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
+        resolver = ChainResolver(llm_model=llm_model)
+        plan = resolve_plan_dynamic_params(plan, resolver)
 
     runner = PlanRunner(build_default_registry())
     ctx = EngineContext(data_dir=data)

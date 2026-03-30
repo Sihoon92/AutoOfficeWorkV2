@@ -7,6 +7,7 @@ PlanRunner는 execution_plan.json을 로드하여 각 step을 순서대로 실�
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from autooffice.engine.context import EngineContext
 
 logger = logging.getLogger(__name__)
+
+# {{dynamic:...}} 미해소 마커 감지 패턴
+_UNRESOLVED_DYNAMIC = re.compile(r"\{\{dynamic:\w+(?:\.\w+)?\}\}")
 
 
 class PlanRunner:
@@ -128,6 +132,16 @@ class PlanRunner:
                     f"Step 번호 불연속: 예상 {expected}, 실제 {step.step}"
                 )
             expected += 1
+
+        # 4) 미해소 동적 마커 경고
+        for step in plan.steps:
+            for key, val in step.params.items():
+                if isinstance(val, str) and _UNRESOLVED_DYNAMIC.search(val):
+                    errors.append(
+                        f"Step {step.step}: 미해소 동적 파라미터 발견 "
+                        f"(param: {key}, value: {val}). "
+                        f"resolve_plan_dynamic_params()가 실행 전에 호출되어야 합니다."
+                    )
 
         return errors
 

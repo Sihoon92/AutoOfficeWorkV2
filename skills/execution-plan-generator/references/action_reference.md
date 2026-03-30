@@ -249,7 +249,48 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 
 ## 날짜 열 탐색 + 시트 간 복사 패턴
 
-FIND_DATE_COLUMN과 COPY_RANGE를 조합하면, 날짜 기반으로 열이 확장되는 엑셀에 자동으로 데이터를 추가할 수 있다.
+### 방법 A: 동적 파라미터 (반복 실행용, 권장)
+
+`dynamic_params`로 날짜와 위치를 선언하면 매일 자동 해소된다. FIND_DATE_COLUMN step이 불필요.
+
+```json
+{
+  "dynamic_params": {
+    "today_target": {
+      "type": "lookup",
+      "prompt": "Sheet1의 Row 3에 BT열(인덱스 72)부터 M/D 형식 날짜가 1일 1열 간격. 시작일=2026-01-01(BT열). 오늘 날짜에 해당하는 열 문자와 행 번호를 JSON으로 반환. 형식: {\"date\": \"YYYY-MM-DD\", \"column\": \"XX\", \"date_row\": 3}",
+      "format": "json",
+      "description": "오늘 날짜의 Sheet1 위치"
+    }
+  },
+  "steps": [
+    {
+      "step": 5,
+      "action": "COPY_RANGE",
+      "description": "자재 계산식 결과를 오늘 날짜 열에 값으로 붙여넣기",
+      "params": {
+        "workbook": "mat",
+        "source_sheet": "자재 계산식",
+        "source_range": "D7:D48",
+        "target_sheet": "Sheet1",
+        "target_column": "{{dynamic:today_target.column}}",
+        "target_start_row": "{{dynamic:today_target.date_row}}",
+        "row_offset": 1,
+        "paste_type": "values"
+      }
+    }
+  ]
+}
+```
+
+**핵심 포인트**:
+- `{{dynamic:today_target.column}}`과 `{{dynamic:today_target.date_row}}`는 런타임에 resolver가 해소
+- `prompt`에 템플릿 구조(시작 열, 시작 날짜, 간격)를 명시해야 LLM이 정확히 계산 가능
+- FIND_DATE_COLUMN step 없이 직접 COPY_RANGE에서 위치를 참조
+
+### 방법 B: FIND_DATE_COLUMN (1회 실행 또는 불규칙 패턴용)
+
+패턴이 불규칙하거나 실제 Excel을 스캔해야 할 때 사용.
 
 ```json
 {
