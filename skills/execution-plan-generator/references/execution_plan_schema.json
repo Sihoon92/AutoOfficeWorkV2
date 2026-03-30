@@ -106,6 +106,7 @@
             "RECALCULATE",
             "FIND_DATE_COLUMN",
             "COPY_RANGE",
+            "AGGREGATE_RANGE",
             "SAVE_FILE",
             "VALIDATE",
             "FORMAT_MESSAGE",

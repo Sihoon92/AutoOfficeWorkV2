@@ -245,6 +245,93 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 
 **반환값**: `{"rows_copied": 42}`
 
+### AGGREGATE_RANGE
+여러 열의 데이터를 행별로 집계(합계/평균/개수)하여 대상 열에 쓴다. 주간 누계, 월간 누계 등에 사용.
+
+```json
+{
+  "action": "AGGREGATE_RANGE",
+  "params": {
+    "workbook": "material",
+    "sheet": "Sheet1",
+    "source_columns_start": "BT",
+    "source_columns_end": "CQ",
+    "source_start_row": 7,
+    "source_end_row": 48,
+    "target_column": "BS",
+    "target_start_row": 7,
+    "method": "sum"
+  },
+  "store_as": "agg_result"
+}
+```
+
+| param | 필수 | 설명 |
+|-------|------|------|
+| workbook | O | 워크북 alias |
+| sheet | O | 시트명 |
+| source_columns_start | O | 집계 시작 열 문자 (예: "BT") |
+| source_columns_end | O | 집계 끝 열 문자 (예: "CQ") |
+| source_start_row | O | 데이터 시작 행 |
+| source_end_row | O | 데이터 끝 행 |
+| target_column | O | 결과를 쓸 열 문자 (예: "BS") |
+| target_start_row | - | 결과 시작 행 (기본: source_start_row과 동일) |
+| method | - | `"sum"` (기본), `"average"`, `"count"` |
+
+**method 설명**:
+- `sum`: 행별 합계 (빈 셀/문자열은 무시, 숫자만 합산)
+- `average`: 행별 평균 (숫자 값만 대상)
+- `count`: 행별 숫자 값 개수
+
+**반환값**: `{"rows_aggregated": 42, "method": "sum"}`
+
+**동적 파라미터와 조합 예시** (주간/월간 누계):
+```json
+{
+  "dynamic_params": {
+    "today_layout": {
+      "type": "lookup",
+      "prompt": "Sheet1 6행 헤더: BT열=3/1 시작, 1일1열. 매주 일요일 다음에 W열(주간합계), 매월 말일 다음에 M열(월간합계). 오늘 기준: daily_column, weekly_column, weekly_start, monthly_column, monthly_start를 JSON으로 반환.",
+      "format": "json"
+    }
+  },
+  "steps": [
+    {
+      "step": 5,
+      "action": "AGGREGATE_RANGE",
+      "description": "이번 주 일별 데이터를 주간 누계 열에 행별 합계",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "source_columns_start": "{{dynamic:today_layout.weekly_start}}",
+        "source_columns_end": "{{dynamic:today_layout.daily_column}}",
+        "source_start_row": 7,
+        "source_end_row": 48,
+        "target_column": "{{dynamic:today_layout.weekly_column}}",
+        "target_start_row": 7,
+        "method": "sum"
+      }
+    },
+    {
+      "step": 6,
+      "action": "AGGREGATE_RANGE",
+      "description": "이번 달 일별 데이터를 월간 누계 열에 행별 합계",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "source_columns_start": "{{dynamic:today_layout.monthly_start}}",
+        "source_columns_end": "{{dynamic:today_layout.daily_column}}",
+        "source_start_row": 7,
+        "source_end_row": 48,
+        "target_column": "{{dynamic:today_layout.monthly_column}}",
+        "target_start_row": 7,
+        "method": "sum"
+      }
+    }
+  ]
+}
+```
+
 ---
 
 ## 날짜 열 탐색 + 시트 간 복사 패턴

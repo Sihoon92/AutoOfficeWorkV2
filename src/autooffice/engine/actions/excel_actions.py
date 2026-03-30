@@ -1,4 +1,4 @@
-"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE."""
+"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, AGGREGATE_RANGE."""
 
 from __future__ import annotations
 
@@ -604,3 +604,128 @@ class CopyRangeHandler(ActionHandler):
             )
         except Exception as e:
             return ActionResult(success=False, error=f"COPY_RANGE 실패: {e}")
+
+
+class AggregateRangeHandler(ActionHandler):
+    """AGGREGATE_RANGE: 여러 열의 데이터를 행별로 집계하여 대상 열에 쓴다.
+
+    지정된 열 범위(source_columns_start~source_columns_end)의 데이터를
+    행별로 집계(합계/평균/개수)하여 target_column에 기록한다.
+    주간 누계, 월간 누계 등 다수 열 데이터의 행별 집계에 사용한다.
+
+    params:
+        workbook: 워크북 alias
+        sheet: 시트명
+        source_columns_start: 집계 시작 열 문자 (예: "BT")
+        source_columns_end: 집계 끝 열 문자 (예: "CQ")
+        source_start_row: 데이터 시작 행 (예: 7)
+        source_end_row: 데이터 끝 행 (예: 48)
+        target_column: 결과를 쓸 열 문자 (예: "BS")
+        target_start_row: 결과 시작 행 (기본: source_start_row과 동일)
+        method: 집계 방법 ("sum" | "average" | "count", 기본: "sum")
+
+    returns (store_as):
+        rows_aggregated: 집계된 행 수
+        method: 사용된 집계 방법
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        sheet_name = params.get("sheet", "")
+        src_col_start = params.get("source_columns_start", "")
+        src_col_end = params.get("source_columns_end", "")
+        src_start_row = params.get("source_start_row", 1)
+        src_end_row = params.get("source_end_row", 1)
+        target_column = params.get("target_column", "")
+        target_start_row = params.get("target_start_row", src_start_row)
+        method = params.get("method", "sum")
+
+        if not src_col_start or not src_col_end:
+            return ActionResult(
+                success=False,
+                error="source_columns_start, source_columns_end 파라미터가 필요합니다.",
+            )
+        if not target_column:
+            return ActionResult(
+                success=False,
+                error="target_column 파라미터가 필요합니다.",
+            )
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws = wb.sheets[sheet_name]
+
+            start_col_idx = _col_letter_to_index(src_col_start)
+            end_col_idx = _col_letter_to_index(src_col_end)
+
+            if end_col_idx < start_col_idx:
+                return ActionResult(
+                    success=False,
+                    error=(
+                        f"source_columns_end({src_col_end})가 "
+                        f"source_columns_start({src_col_start})보다 앞에 있습니다."
+                    ),
+                )
+
+            src_start_row = int(src_start_row)
+            src_end_row = int(src_end_row)
+            target_start_row = int(target_start_row)
+            num_rows = src_end_row - src_start_row + 1
+
+            if num_rows <= 0:
+                return ActionResult(
+                    success=False,
+                    error=f"행 범위가 올바르지 않습니다: {src_start_row}~{src_end_row}",
+                )
+
+            # 소스 범위 일괄 읽기
+            src_rng = ws.range(
+                (src_start_row, start_col_idx),
+                (src_end_row, end_col_idx),
+            )
+            raw = src_rng.value
+
+            # 2D 리스트로 정규화
+            num_cols = end_col_idx - start_col_idx + 1
+            if not isinstance(raw, list):
+                raw = [[raw]]
+            elif num_rows == 1 and num_cols > 1:
+                raw = [raw]
+            elif num_cols == 1:
+                raw = [[v] for v in raw]
+
+            # 행별 집계
+            results: list[list[Any]] = []
+            for row_data in raw:
+                # 숫자 값만 필터링
+                nums = [v for v in row_data if isinstance(v, (int, float))]
+                if method == "sum":
+                    agg = sum(nums) if nums else 0
+                elif method == "average":
+                    agg = sum(nums) / len(nums) if nums else 0
+                elif method == "count":
+                    agg = len(nums)
+                else:
+                    agg = sum(nums) if nums else 0
+                results.append([agg])
+
+            # 결과 쓰기
+            tgt_col_idx = _col_letter_to_index(target_column)
+            tgt_rng = ws.range(
+                (target_start_row, tgt_col_idx),
+                (target_start_row + num_rows - 1, tgt_col_idx),
+            )
+            tgt_rng.value = results
+
+            return ActionResult(
+                success=True,
+                data={"rows_aggregated": num_rows, "method": method},
+                message=(
+                    f"집계 완료: {sheet_name}!"
+                    f"{src_col_start}{src_start_row}:{src_col_end}{src_end_row} → "
+                    f"{target_column}{target_start_row} "
+                    f"({num_rows}행, {method})"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"AGGREGATE_RANGE 실패: {e}")
