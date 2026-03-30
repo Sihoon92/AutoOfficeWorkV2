@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from autooffice.engine.actions import build_default_registry
 from autooffice.engine.context import EngineContext

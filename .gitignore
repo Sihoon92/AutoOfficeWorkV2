@@ -6,5 +6,6 @@ dist/
 build/
 .pytest_cache/
 .coverage
+.env
 *.xlsx
 !templates/.gitkeep
