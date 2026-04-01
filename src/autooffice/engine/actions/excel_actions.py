@@ -1,4 +1,4 @@
-"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, AGGREGATE_RANGE."""
+"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, AGGREGATE_RANGE, FIND_ANCHOR."""
 
 from __future__ import annotations
 
@@ -729,3 +729,109 @@ class AggregateRangeHandler(ActionHandler):
             )
         except Exception as e:
             return ActionResult(success=False, error=f"AGGREGATE_RANGE 실패: {e}")
+
+
+class FindAnchorHandler(ActionHandler):
+    """FIND_ANCHOR: scan_range 내에서 텍스트를 검색하여 셀 위치를 반환한다.
+
+    하드코딩 좌표 대신 텍스트 기준점을 찾아 후속 스텝에서
+    $anchor.column, $anchor.row로 참조할 수 있도록 한다.
+
+    params:
+        workbook: 워크북 alias
+        sheet: 시트명
+        search_value: 찾을 텍스트
+        scan_range: 탐색 범위 (기본: "A1:ZZ100")
+        match_type: 매칭 방식 ("exact" | "contains" | "starts_with", 기본: "exact")
+
+    returns (store_as):
+        row: 발견된 행 번호 (1-based)
+        column: 발견된 열 문자 (예: "B")
+        cell: 셀 주소 (예: "B3")
+        value: 매칭된 셀의 실제 값
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        sheet_name = params.get("sheet", "")
+        search_value = params.get("search_value", "")
+        scan_range = params.get("scan_range", "A1:ZZ100")
+        match_type = params.get("match_type", "exact")
+
+        if not search_value:
+            return ActionResult(
+                success=False,
+                error="search_value 파라미터가 필요합니다.",
+            )
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws = wb.sheets[sheet_name]
+
+            rng = ws.range(scan_range)
+            raw = rng.value
+            if raw is None:
+                return ActionResult(
+                    success=False,
+                    error="scan_range가 비어있습니다.",
+                )
+
+            # 2D 리스트로 정규화
+            if not isinstance(raw, list):
+                raw = [[raw]]
+            elif not isinstance(raw[0], list):
+                raw = [raw]
+
+            start_row = rng.row
+            start_col = rng.column
+            search_lower = search_value.lower()
+
+            for r_offset, row_data in enumerate(raw):
+                if row_data is None:
+                    continue
+                for c_offset, cell_val in enumerate(row_data):
+                    if cell_val is None:
+                        continue
+
+                    cell_str = str(cell_val).strip()
+                    # 숫자의 .0 제거 (xlwings는 정수도 float로 반환)
+                    if isinstance(cell_val, float) and cell_val == int(cell_val):
+                        cell_str = str(int(cell_val))
+
+                    cell_lower = cell_str.lower()
+
+                    matched = False
+                    if match_type == "exact":
+                        matched = cell_lower == search_lower
+                    elif match_type == "contains":
+                        matched = search_lower in cell_lower
+                    elif match_type == "starts_with":
+                        matched = cell_lower.startswith(search_lower)
+
+                    if matched:
+                        actual_row = start_row + r_offset
+                        actual_col = start_col + c_offset
+                        col_letter = _col_index_to_letter(actual_col)
+                        return ActionResult(
+                            success=True,
+                            data={
+                                "row": actual_row,
+                                "column": col_letter,
+                                "cell": f"{col_letter}{actual_row}",
+                                "value": cell_str,
+                            },
+                            message=(
+                                f"앵커 발견: '{search_value}' → "
+                                f"{col_letter}{actual_row} (값: {cell_str})"
+                            ),
+                        )
+
+            return ActionResult(
+                success=False,
+                error=(
+                    f"'{search_value}'을(를) {scan_range} 범위에서 "
+                    f"찾을 수 없습니다. (match_type: {match_type})"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"FIND_ANCHOR 실패: {e}")
