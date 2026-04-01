@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 from autooffice.engine.resolvers.builtin_resolver import BuiltinDynamicResolver
@@ -57,6 +57,135 @@ class TestBuiltinDynamicResolver:
         assert "today" in result
         assert "location" not in result
         assert "note" not in result
+
+    def test_prompt_today(self):
+        """prompt='today' → 오늘 날짜."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="today"),
+        }
+        result = resolver.resolve(declarations)
+        assert result["d"] == date.today().isoformat()
+
+    def test_prompt_yesterday(self):
+        """prompt='yesterday' → 어제 날짜."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="yesterday"),
+        }
+        result = resolver.resolve(declarations)
+        expected = (date.today() - timedelta(days=1)).isoformat()
+        assert result["d"] == expected
+
+    def test_prompt_this_week_monday(self):
+        """prompt='this_week_monday' → 이번 주 월요일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="this_week_monday"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        assert result["d"] == monday.isoformat()
+
+    def test_prompt_this_week_sunday(self):
+        """prompt='this_week_sunday' → 이번 주 일요일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="this_week_sunday"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        sunday = today - timedelta(days=today.weekday()) + timedelta(days=6)
+        assert result["d"] == sunday.isoformat()
+
+    def test_prompt_last_week_monday(self):
+        """prompt='last_week_monday' → 지난주 월요일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="last_week_monday"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        last_monday = today - timedelta(days=today.weekday() + 7)
+        assert result["d"] == last_monday.isoformat()
+
+    def test_prompt_last_week_sunday(self):
+        """prompt='last_week_sunday' → 지난주 일요일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="last_week_sunday"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        last_sunday = today - timedelta(days=today.weekday() + 1)
+        assert result["d"] == last_sunday.isoformat()
+
+    def test_prompt_this_month_start(self):
+        """prompt='this_month_start' → 이번 달 1일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="this_month_start"),
+        }
+        result = resolver.resolve(declarations)
+        assert result["d"] == date.today().replace(day=1).isoformat()
+
+    def test_prompt_this_month_end(self):
+        """prompt='this_month_end' → 이번 달 마지막 날."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="this_month_end"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        if today.month == 12:
+            next_month_start = date(today.year + 1, 1, 1)
+        else:
+            next_month_start = date(today.year, today.month + 1, 1)
+        expected = (next_month_start - timedelta(days=1)).isoformat()
+        assert result["d"] == expected
+
+    def test_prompt_last_month_start(self):
+        """prompt='last_month_start' → 지난달 1일."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="last_month_start"),
+        }
+        result = resolver.resolve(declarations)
+        this_month_start = date.today().replace(day=1)
+        last_month_end = this_month_start - timedelta(days=1)
+        assert result["d"] == last_month_end.replace(day=1).isoformat()
+
+    def test_prompt_last_month_end(self):
+        """prompt='last_month_end' → 지난달 마지막 날."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="last_month_end"),
+        }
+        result = resolver.resolve(declarations)
+        this_month_start = date.today().replace(day=1)
+        expected = (this_month_start - timedelta(days=1)).isoformat()
+        assert result["d"] == expected
+
+    def test_unknown_prompt_falls_back_to_today(self):
+        """알 수 없는 prompt → today 대체."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="unknown_keyword"),
+        }
+        result = resolver.resolve(declarations)
+        assert result["d"] == date.today().isoformat()
+
+    def test_prompt_case_insensitive(self):
+        """prompt 대소문자 무시."""
+        resolver = BuiltinDynamicResolver()
+        declarations = {
+            "d": DynamicParamSpec(type=DynamicParamType.DATE, prompt="This_Week_Monday"),
+        }
+        result = resolver.resolve(declarations)
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        assert result["d"] == monday.isoformat()
 
 
 class TestResolvePlanDynamicParams:
