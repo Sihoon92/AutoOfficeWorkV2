@@ -583,3 +583,79 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 | on_fail | - | 실패 시 행동: STOP, SKIP, RETRY, WARN_AND_CONTINUE (기본 STOP) |
 | store_as | - | 결과를 변수로 저장 (이후 step에서 `$변수명` 또는 `$변수명.필드명`으로 참조) |
 | require_confirm | - | true면 사용자 확인 후 실행 (외부 발송 시 권장) |
+
+---
+
+## FIND_ANCHOR
+
+scan_range 내에서 텍스트를 검색하여 셀 위치를 반환한다.
+하드코딩 좌표 대신 텍스트 기준점으로 동적 위치를 결정할 때 사용한다.
+
+### params
+| 이름 | 타입 | 필수 | 기본값 | 설명 |
+|------|------|------|--------|------|
+| workbook | str | O | | 워크북 alias |
+| sheet | str | O | | 시트명 |
+| search_value | str | O | | 찾을 텍스트 |
+| scan_range | str | | "A1:ZZ100" | 탐색 범위 |
+| match_type | str | | "exact" | "exact", "contains", "starts_with" |
+
+### store_as 반환값
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| row | int | 발견된 행 번호 |
+| column | str | 발견된 열 문자 |
+| cell | str | 셀 주소 (예: "B3") |
+| value | str | 매칭된 셀의 실제 값 |
+
+### 사용 예시
+```json
+{
+    "action": "FIND_ANCHOR",
+    "params": {
+        "workbook": "defect",
+        "sheet": "Sheet1",
+        "search_value": "주간",
+        "match_type": "contains"
+    },
+    "store_as": "weekly_anchor"
+}
+```
+
+## FIND_DATE_RANGE
+
+날짜 범위에 해당하는 열들을 한번에 탐색한다.
+FIND_DATE_COLUMN의 날짜 스캔 로직을 재사용하여 여러 날짜를 일괄 매칭한다.
+
+### params
+| 이름 | 타입 | 필수 | 기본값 | 설명 |
+|------|------|------|--------|------|
+| workbook | str | O | | 워크북 alias |
+| sheet | str | O | | 시트명 |
+| scan_range | str | | "A1:ZZ10" | 날짜 탐색 범위 |
+| start_date | str | O | | 시작 날짜 (ISO: YYYY-MM-DD) |
+| end_date | str | O | | 종료 날짜 (ISO: YYYY-MM-DD) |
+
+### store_as 반환값
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| start_column | str | 매칭된 첫 번째 열 문자 |
+| end_column | str | 매칭된 마지막 열 문자 |
+| date_row | int | 날짜 헤더 행 번호 |
+| columns | list[str] | 매칭된 모든 열 문자 리스트 |
+| matched_count | int | 매칭된 날짜 수 |
+| missing_dates | list[str] | 범위 내 못 찾은 날짜 ISO 리스트 |
+
+### 사용 예시
+```json
+{
+    "action": "FIND_DATE_RANGE",
+    "params": {
+        "workbook": "defect",
+        "sheet": "Sheet1",
+        "start_date": "{{dynamic:week_start}}",
+        "end_date": "{{dynamic:week_end}}"
+    },
+    "store_as": "week_cols"
+}
+```
