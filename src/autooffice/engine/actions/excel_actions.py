@@ -1,10 +1,10 @@
-"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, AGGREGATE_RANGE, FIND_ANCHOR."""
+"""엑셀 조작 ACTION 핸들러: READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, AGGREGATE_RANGE, FIND_ANCHOR, FIND_DATE_RANGE."""
 
 from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from autooffice.engine.actions.base import ActionHandler
@@ -835,3 +835,144 @@ class FindAnchorHandler(ActionHandler):
             )
         except Exception as e:
             return ActionResult(success=False, error=f"FIND_ANCHOR 실패: {e}")
+
+
+class FindDateRangeHandler(ActionHandler):
+    """FIND_DATE_RANGE: 날짜 범위에 해당하는 열들을 한번에 탐색한다.
+
+    scan_range 내에서 start_date~end_date에 해당하는 모든 날짜 열을 찾는다.
+    FIND_DATE_COLUMN의 날짜 스캔 로직(_try_parse_date, 날짜 행 감지)을 재사용한다.
+
+    params:
+        workbook: 워크북 alias
+        sheet: 시트명
+        scan_range: 날짜 탐색 범위 (기본: "A1:ZZ10")
+        start_date: 시작 날짜 ISO (예: "2026-03-30")
+        end_date: 종료 날짜 ISO (예: "2026-04-05")
+
+    returns (store_as):
+        start_column: 매칭된 첫 번째 열 문자
+        end_column: 매칭된 마지막 열 문자
+        date_row: 날짜 헤더가 있는 행 번호
+        columns: 매칭된 모든 열 문자 리스트
+        matched_count: 매칭된 날짜 수
+        missing_dates: 범위 내 못 찾은 날짜 ISO 리스트
+    """
+
+    def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
+        workbook = params.get("workbook", "")
+        sheet_name = params.get("sheet", "")
+        scan_range = params.get("scan_range", "A1:ZZ10")
+        start_date_str = params.get("start_date", "")
+        end_date_str = params.get("end_date", "")
+
+        # 날짜 파싱
+        try:
+            start_date = date.fromisoformat(start_date_str)
+        except (ValueError, TypeError):
+            return ActionResult(
+                success=False,
+                error=f"start_date 형식 오류: '{start_date_str}'. ISO 형식(YYYY-MM-DD)으로 입력하세요.",
+            )
+        try:
+            end_date = date.fromisoformat(end_date_str)
+        except (ValueError, TypeError):
+            return ActionResult(
+                success=False,
+                error=f"end_date 형식 오류: '{end_date_str}'. ISO 형식(YYYY-MM-DD)으로 입력하세요.",
+            )
+
+        if end_date < start_date:
+            return ActionResult(
+                success=False,
+                error=f"end_date({end_date})가 start_date({start_date})보다 이전입니다.",
+            )
+
+        try:
+            wb = ctx.get_workbook(workbook)
+            ws = wb.sheets[sheet_name]
+
+            rng = ws.range(scan_range)
+            raw = rng.value
+            if raw is None:
+                return ActionResult(success=False, error="scan_range가 비어있습니다.")
+
+            # 2D 리스트로 정규화
+            if not isinstance(raw, list):
+                raw = [[raw]]
+            elif not isinstance(raw[0], list):
+                raw = [raw]
+
+            start_row = rng.row
+            start_col = rng.column
+
+            # 행별 날짜 셀 수집 (FIND_DATE_COLUMN과 동일한 로직)
+            date_cells_by_row: dict[int, list[tuple[int, date]]] = {}
+            for r_offset, row_data in enumerate(raw):
+                actual_row = start_row + r_offset
+                if row_data is None:
+                    continue
+                dates_in_row: list[tuple[int, date]] = []
+                for c_offset, cell_val in enumerate(row_data):
+                    actual_col = start_col + c_offset
+                    parsed = _try_parse_date(cell_val, year=start_date.year)
+                    if parsed is not None:
+                        dates_in_row.append((actual_col, parsed))
+                if dates_in_row:
+                    date_cells_by_row[actual_row] = dates_in_row
+
+            if not date_cells_by_row:
+                return ActionResult(
+                    success=False,
+                    error="scan_range에서 날짜를 찾을 수 없습니다.",
+                )
+
+            # 날짜가 가장 많은 행 = date_row
+            date_row = max(date_cells_by_row, key=lambda r: len(date_cells_by_row[r]))
+            date_cells = sorted(date_cells_by_row[date_row], key=lambda x: x[0])
+
+            # 범위 내 날짜 필터
+            matched: list[tuple[int, date]] = [
+                (col_idx, d)
+                for col_idx, d in date_cells
+                if start_date <= d <= end_date
+            ]
+
+            if not matched:
+                return ActionResult(
+                    success=False,
+                    error=(
+                        f"{start_date}~{end_date} 범위의 날짜를 "
+                        f"찾을 수 없습니다."
+                    ),
+                )
+
+            columns = [_col_index_to_letter(col_idx) for col_idx, _ in matched]
+            matched_dates = {d for _, d in matched}
+
+            # missing_dates 계산
+            all_dates_in_range: set[date] = set()
+            current = start_date
+            while current <= end_date:
+                all_dates_in_range.add(current)
+                current += timedelta(days=1)
+            missing = sorted(all_dates_in_range - matched_dates)
+
+            return ActionResult(
+                success=True,
+                data={
+                    "start_column": columns[0],
+                    "end_column": columns[-1],
+                    "date_row": date_row,
+                    "columns": columns,
+                    "matched_count": len(columns),
+                    "missing_dates": [d.isoformat() for d in missing],
+                },
+                message=(
+                    f"날짜 범위 탐색 완료: {start_date}~{end_date} → "
+                    f"{columns[0]}~{columns[-1]} ({len(columns)}열 매칭, "
+                    f"{len(missing)}개 누락)"
+                ),
+            )
+        except Exception as e:
+            return ActionResult(success=False, error=f"FIND_DATE_RANGE 실패: {e}")
