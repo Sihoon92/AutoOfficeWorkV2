@@ -32,7 +32,8 @@ def _next_month_start() -> date:
     return date(today.year, today.month + 1, 1)
 
 
-DATE_FUNCTIONS: dict[str, Callable[[], date]] = {
+DATE_FUNCTIONS: dict[str, Callable[[], date | str]] = {
+    # ── 기존: date 객체 반환 ──
     "today": lambda: date.today(),
     "yesterday": lambda: date.today() - timedelta(days=1),
     "this_week_monday": _this_week_monday,
@@ -43,6 +44,13 @@ DATE_FUNCTIONS: dict[str, Callable[[], date]] = {
     "this_month_end": lambda: _next_month_start() - timedelta(days=1),
     "last_month_start": lambda: (_this_month_start() - timedelta(days=1)).replace(day=1),
     "last_month_end": lambda: _this_month_start() - timedelta(days=1),
+    # ── 신규: str 반환 (파일명 생성, 라벨 매칭용) ──
+    "today_yyyymmdd": lambda: date.today().strftime("%Y%m%d"),
+    "today_yyyy_mm_dd": lambda: date.today().strftime("%Y_%m_%d"),
+    "week_number": lambda: str(date.today().isocalendar()[1]),
+    "month_number": lambda: str(date.today().month),
+    "year": lambda: str(date.today().year),
+    "quarter": lambda: str((date.today().month - 1) // 3 + 1),
 }
 
 
@@ -67,12 +75,14 @@ class BuiltinDynamicResolver(DynamicResolver):
             if spec.type == DynamicParamType.DATE:
                 func_key = spec.prompt.strip().lower()
                 if func_key in DATE_FUNCTIONS:
-                    value = DATE_FUNCTIONS[func_key]().isoformat()
+                    raw = DATE_FUNCTIONS[func_key]()
                 else:
-                    value = date.today().isoformat()
+                    raw = date.today()
                     logger.warning(
                         "알 수 없는 date prompt '%s', today로 대체", func_key
                     )
+                # date 객체 → ISO string, str은 그대로
+                value = raw.isoformat() if isinstance(raw, date) else raw
                 resolved[key] = value
                 logger.info(
                     "내장 해소: %s → %s (prompt: %s)", key, value, func_key

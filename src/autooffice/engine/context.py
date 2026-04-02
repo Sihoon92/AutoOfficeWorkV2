@@ -25,8 +25,14 @@ class EngineContext:
     store_as로 저장한 값은 variables에서 참조 가능하다.
     """
 
-    def __init__(self, data_dir: str | Path = ".", app: xw.App | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path = ".",
+        input_files: dict[str, str] | None = None,
+        app: xw.App | None = None,
+    ) -> None:
         self.data_dir = Path(data_dir)
+        self.input_files: dict[str, str] = input_files or {}
         self._app = app
         self._owns_app = app is None
         self.open_workbooks: dict[str, xw.Book] = {}
@@ -34,6 +40,10 @@ class EngineContext:
         self.variables: dict[str, Any] = {}
         self.log_messages: list[str] = []
         self.dry_run: bool = False
+
+        # $input.KEY 참조를 위해 variables에 사전 등록
+        if self.input_files:
+            self.variables["input"] = dict(self.input_files)
 
     @property
     def app(self) -> xw.App:

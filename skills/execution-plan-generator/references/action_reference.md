@@ -7,12 +7,24 @@
 ### OPEN_FILE
 파일을 열어 엔진 컨텍스트에 등록한다.
 
+**방법 1: input_key 사용 (권장)** — 사용자가 `--input`으로 전달한 파일을 참조
 ```json
 {
   "action": "OPEN_FILE",
   "params": {
-    "file_path": "raw_data.xlsx",
-    "alias": "raw",
+    "input_key": "raw_data",
+    "alias": "raw"
+  }
+}
+```
+
+**방법 2: file_path 직접 지정** — 파일명이 고정된 경우 (하위 호환)
+```json
+{
+  "action": "OPEN_FILE",
+  "params": {
+    "file_path": "template.xlsx",
+    "alias": "tpl",
     "data_only": true
   }
 }
@@ -20,9 +32,12 @@
 
 | param | 필수 | 설명 |
 |-------|------|------|
-| file_path | O | 파일 경로 (상대경로면 --data 기준) |
+| input_key | △ | inputs에 정의된 입력 키. `--input KEY=파일` 로 전달된 값 사용. file_path보다 우선 |
+| file_path | △ | 파일 경로 (상대경로면 --data 기준). input_key 미지정 시 사용 |
 | alias | - | 이후 step에서 참조할 이름 (기본: 파일명) |
 | data_only | - | true면 수식 대신 계산된 값으로 읽기 (기본 false) |
+
+input_key와 file_path 중 하나는 반드시 지정해야 한다. input_key 사용 시 plan의 `inputs` 섹션에 해당 키가 선언되어 있어야 한다.
 
 ### SAVE_FILE
 워크북을 파일로 저장한다.
@@ -659,3 +674,51 @@ FIND_DATE_COLUMN의 날짜 스캔 로직을 재사용하여 여러 날짜를 일
     "store_as": "week_cols"
 }
 ```
+
+## EXTRACT_DATE
+
+파일명이나 임의 문자열에서 날짜를 추출하고, 파생 정보(주차, 월, 분기 등)를 한번에 계산하여 반환한다.
+raw data 파일명에 날짜가 포함된 경우, 이 step 하나로 이후 단계에서 필요한 모든 날짜 정보를 확보할 수 있다.
+
+### params
+| 이름 | 타입 | 필수 | 기본값 | 설명 |
+|------|------|------|--------|------|
+| source | str | O | | 날짜를 추출할 문자열 (파일명, 셀 값 등) |
+| pattern | str | | "YYYYMMDD" | `"YYYYMMDD"`, `"YYYY-MM-DD"`, `"YYYY_MM_DD"`, `"YYYY/MM/DD"`, `"auto"` |
+
+`"auto"` — 위 4개 패턴을 순서대로 시도하여 처음 매칭되는 것 사용.
+
+### store_as 반환값
+| 필드 | 타입 | 설명 | 예시 (2026-04-02) |
+|------|------|------|-------------------|
+| date | str | ISO 날짜 | "2026-04-02" |
+| yyyymmdd | str | 숫자 8자리 | "20260402" |
+| year | int | 연도 | 2026 |
+| month | int | 월 | 4 |
+| day | int | 일 | 2 |
+| weekday | str | 요일 (영문 3자리) | "Thu" |
+| week_number | int | ISO 주차 | 14 |
+| week_monday | str | 해당 주 월요일 | "2026-03-30" |
+| week_sunday | str | 해당 주 일요일 | "2026-04-05" |
+| month_start | str | 해당 월 1일 | "2026-04-01" |
+| month_end | str | 해당 월 마지막 날 | "2026-04-30" |
+| quarter | int | 분기 | 2 |
+
+### 사용 예시
+```json
+{
+    "step": 3,
+    "action": "EXTRACT_DATE",
+    "description": "raw data 파일명에서 날짜 및 파생 정보 추출",
+    "params": {
+        "source": "$input.raw_data",
+        "pattern": "YYYYMMDD"
+    },
+    "store_as": "file_date"
+}
+```
+
+이후 step에서 점 표기법으로 참조:
+- `$file_date.date` → `"2026-04-02"` (FIND_DATE_COLUMN에 전달)
+- `$file_date.week_monday` → `"2026-03-30"` (FIND_DATE_RANGE에 전달)
+- `$file_date.month` → `4` (FIND_ANCHOR에서 `"4월"` 매칭용)

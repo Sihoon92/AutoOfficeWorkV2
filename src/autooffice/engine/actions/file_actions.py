@@ -18,12 +18,25 @@ class OpenFileHandler(ActionHandler):
 
     params:
         file_path: 파일 경로 (상대경로면 data_dir 기준)
+        input_key: inputs에서 정의된 입력 키 (file_path 대안, --input으로 전달된 값 사용)
         alias: 컨텍스트 등록명 (선택, 기본값은 파일명)
         data_only: 호환성을 위해 유지 (xlwings는 항상 계산된 값 접근 가능)
+
+    input_key와 file_path 중 하나만 지정한다. input_key가 우선.
     """
 
     def execute(self, params: dict[str, Any], ctx: EngineContext) -> ActionResult:
-        file_path = params.get("file_path", "")
+        input_key = params.get("input_key")
+        if input_key:
+            if input_key not in ctx.input_files:
+                return ActionResult(
+                    success=False,
+                    error=f"입력 '{input_key}' 미지정. --input {input_key}=파일경로 필요",
+                )
+            file_path = ctx.input_files[input_key]
+        else:
+            file_path = params.get("file_path", "")
+
         alias = params.get("alias", "")
 
         path = Path(file_path)

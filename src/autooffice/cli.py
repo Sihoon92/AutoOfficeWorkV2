@@ -26,7 +26,38 @@ _DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 from autooffice.engine.actions import build_default_registry
 from autooffice.engine.context import EngineContext
 from autooffice.engine.runner import PlanRunner
-from autooffice.models.execution_plan import ExecutionPlan
+from autooffice.models.execution_plan import ExecutionPlan, InputSpec
+
+
+def _parse_inputs(raw_inputs: tuple[str, ...]) -> dict[str, str]:
+    """'KEY=VALUE' 형식의 --input 인자를 dict로 변환한다."""
+    result: dict[str, str] = {}
+    for item in raw_inputs:
+        if "=" not in item:
+            raise click.BadParameter(
+                f"입력 형식 오류: '{item}' (KEY=PATH 형식 필요)",
+                param_hint="--input",
+            )
+        key, value = item.split("=", 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+def _validate_inputs(
+    plan_inputs: dict[str, InputSpec],
+    input_map: dict[str, str],
+    data_dir: Path,
+) -> None:
+    """plan의 inputs 정의와 실제 입력을 대조 검증한다."""
+    missing = set(plan_inputs.keys()) - set(input_map.keys())
+    if missing:
+        hints = ", ".join(f"--input {k}=파일경로" for k in sorted(missing))
+        raise click.UsageError(f"필수 입력 파일 누락: {', '.join(sorted(missing))}\n  사용법: {hints}")
+
+    for key, filename in input_map.items():
+        path = data_dir / filename
+        if not path.exists():
+            raise click.FileError(str(path), hint=f"--input {key}={filename}")
 
 
 @click.group()
@@ -44,9 +75,10 @@ def main(verbose: bool) -> None:
 @main.command()
 @click.argument("plan_file", type=click.Path(exists=True))
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
+@click.option("--input", "-i", "inputs", multiple=True, help="입력 파일 매핑 (KEY=PATH, 반복 가능)")
 @click.option("--no-resolve", is_flag=True, default=False, help="동적 파라미터 해소 건너뛰기")
 @click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
-def run(plan_file: str, data: str, no_resolve: bool, llm_model: str) -> None:
+def run(plan_file: str, data: str, inputs: tuple[str, ...], no_resolve: bool, llm_model: str) -> None:
     """execution_plan.json을 실행한다."""
     click.echo(f"plan 로드: {plan_file}")
 
@@ -55,6 +87,12 @@ def run(plan_file: str, data: str, no_resolve: bool, llm_model: str) -> None:
     except Exception as e:
         click.echo(f"plan 파싱 실패: {e}", err=True)
         sys.exit(1)
+
+    # 입력 파일 매핑 처리
+    data_dir = Path(data)
+    input_map = _parse_inputs(inputs)
+    if plan.inputs:
+        _validate_inputs(plan.inputs, input_map, data_dir)
 
     # 동적 파라미터 해소
     if not no_resolve and plan.dynamic_params:
@@ -69,7 +107,7 @@ def run(plan_file: str, data: str, no_resolve: bool, llm_model: str) -> None:
         click.echo("동적 파라미터 해소 완료")
 
     runner = PlanRunner(build_default_registry())
-    ctx = EngineContext(data_dir=data)
+    ctx = EngineContext(data_dir=data, input_files=input_map)
 
     # 먼저 검증
     errors = runner.validate(plan)
@@ -148,8 +186,9 @@ def cache_list() -> None:
 @cache.command("run")
 @click.argument("plan_id")
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
+@click.option("--input", "-i", "inputs", multiple=True, help="입력 파일 매핑 (KEY=PATH, 반복 가능)")
 @click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
-def cache_run(plan_id: str, data: str, llm_model: str) -> None:
+def cache_run(plan_id: str, data: str, inputs: tuple[str, ...], llm_model: str) -> None:
     """캐시된 plan을 실행한다."""
     from autooffice.cache.plan_cache import PlanCache
 
@@ -159,6 +198,12 @@ def cache_run(plan_id: str, data: str, llm_model: str) -> None:
     if plan is None:
         click.echo(f"캐시에서 plan '{plan_id}'을 찾을 수 없습니다.", err=True)
         sys.exit(1)
+
+    # 입력 파일 매핑 처리
+    data_dir = Path(data)
+    input_map = _parse_inputs(inputs)
+    if plan.inputs:
+        _validate_inputs(plan.inputs, input_map, data_dir)
 
     # 동적 파라미터 해소
     if plan.dynamic_params:
@@ -172,7 +217,7 @@ def cache_run(plan_id: str, data: str, llm_model: str) -> None:
         plan = resolve_plan_dynamic_params(plan, resolver)
 
     runner = PlanRunner(build_default_registry())
-    ctx = EngineContext(data_dir=data)
+    ctx = EngineContext(data_dir=data, input_files=input_map)
     log = runner.run(plan, ctx)
 
     click.echo(log.summary())

@@ -64,7 +64,7 @@ Phase 1: Claude (no data)              Phase 2: Python Engine (with data)
 
 ### Action Handler Registry Pattern
 
-All 13 action types (OPEN_FILE, READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, COPY_RANGE, SAVE_FILE, VALIDATE, FORMAT_MESSAGE, SEND_MESSENGER, LOG) are registered via `build_default_registry()`. To add a new action:
+All 17 action types (OPEN_FILE, READ_COLUMNS, READ_RANGE, WRITE_DATA, CLEAR_RANGE, RECALCULATE, FIND_DATE_COLUMN, FIND_DATE_RANGE, FIND_ANCHOR, COPY_RANGE, AGGREGATE_RANGE, EXTRACT_DATE, SAVE_FILE, VALIDATE, FORMAT_MESSAGE, SEND_MESSENGER, LOG) are registered via `build_default_registry()`. To add a new action:
 1. Create a handler class extending `ActionHandler` in `engine/actions/`
 2. Implement `execute(params, ctx) → ActionResult`
 3. Register with `ActionType.XXX.value` key in `build_default_registry()`

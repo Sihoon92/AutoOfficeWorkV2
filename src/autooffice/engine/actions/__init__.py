@@ -17,6 +17,7 @@ from autooffice.engine.actions.excel_actions import (
     ClearRangeHandler,
     RecalculateHandler,
 )
+from autooffice.engine.actions.date_actions import ExtractDateHandler
 from autooffice.engine.actions.validate_actions import ValidateHandler
 from autooffice.engine.actions.format_actions import FormatMessageHandler
 from autooffice.engine.actions.messenger_actions import SendMessengerHandler
@@ -38,6 +39,7 @@ def build_default_registry() -> dict[str, ActionHandler]:
         "AGGREGATE_RANGE": AggregateRangeHandler(),
         "FIND_ANCHOR": FindAnchorHandler(),
         "FIND_DATE_RANGE": FindDateRangeHandler(),
+        "EXTRACT_DATE": ExtractDateHandler(),
         "VALIDATE": ValidateHandler(),
         "FORMAT_MESSAGE": FormatMessageHandler(),
         "SEND_MESSENGER": SendMessengerHandler(),

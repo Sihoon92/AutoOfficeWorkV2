@@ -107,6 +107,7 @@
             "FIND_DATE_COLUMN",
             "COPY_RANGE",
             "AGGREGATE_RANGE",
+            "EXTRACT_DATE",
             "SAVE_FILE",
             "VALIDATE",
             "FORMAT_MESSAGE",
