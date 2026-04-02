@@ -448,13 +448,128 @@ step params에서 `{{dynamic:key}}` 또는 `{{dynamic:key.field}}`로 참조:
 - **날짜 형식** (M/D, YYYY-MM-DD 등)
 - **기대 응답 형식** (JSON 구조)
 
-### FIND_DATE_COLUMN과의 선택 기준
+### 위치 결정 전략: 내장 액션 우선 원칙
 
-| 상황 | 접근법 |
-|------|--------|
-| 날짜 패턴이 예측 가능 (1일 1열, 고정 시작점) | `dynamic_params` + `type: "lookup"` |
-| 날짜 패턴이 불규칙 (빈 열, 병합 셀 등) | `FIND_DATE_COLUMN` step (실제 Excel 스캔) |
-| 혼합 | `dynamic_params`로 date만 해소 + `FIND_DATE_COLUMN`에서 위치 탐색 |
+**날짜/위치 결정은 내장 액션 조합을 먼저 사용하고, 그것으로 불가능할 때만 `type: "lookup"` (LLM)을 사용한다.**
+
+`type: "lookup"`은 LLM API 호출이 발생하여 비용과 지연이 생긴다.
+아래 표의 정보는 대부분 내장 액션만으로 얻을 수 있으므로 **lookup 없이 해결하는 것을 기본으로 한다.**
+
+#### 내장 액션으로 해결 가능한 경우 (LLM 불필요)
+
+| 필요한 정보 | 내장 해결 방법 | 비용 |
+|------------|--------------|------|
+| 오늘/어제/이번주 등 날짜 값 | `dynamic_params` `type: "date"` + BuiltinResolver | 0 |
+| 파일명에서 날짜 추출 + 파생 정보 | `EXTRACT_DATE` step | 0 |
+| 특정 날짜의 컬럼 위치 | `FIND_DATE_COLUMN` step | 0 |
+| 날짜 범위의 컬럼들 (주간/월간) | `FIND_DATE_RANGE` step | 0 |
+| 텍스트 라벨의 셀 위치 ("주간", "4월" 등) | `FIND_ANCHOR` step | 0 |
+| 여러 열의 행별 합계/평균 | `AGGREGATE_RANGE` step | 0 |
+
+#### lookup이 필요한 경우 (LLM 필요)
+
+| 필요한 정보 | 이유 |
+|------------|------|
+| 비정형 계산 (열 인덱스 산술, 복잡한 매핑 규칙) | 내장 액션으로 표현 불가 |
+| 양식 구조가 극도로 불규칙하여 패턴 탐색 불가 | FIND_DATE_COLUMN/FIND_ANCHOR로 찾을 수 없는 경우 |
+
+#### 잘못된 예 vs 올바른 예
+
+**❌ 잘못된 예 — lookup으로 LLM에 위치 계산을 위임:**
+```json
+{
+  "dynamic_params": {
+    "today_date": {"type": "date", "prompt": "today"},
+    "weekly_range": {
+      "type": "lookup",
+      "prompt": "Sheet1 6행에 날짜 헤더, 오늘 날짜 속한 주의 주간 집계 열과 소스 범위를 JSON으로 반환",
+      "format": "json"
+    }
+  },
+  "steps": [
+    {"step": 5, "action": "AGGREGATE_RANGE",
+     "params": {
+       "source_columns_start": "{{dynamic:weekly_range.start_col}}",
+       "source_columns_end": "{{dynamic:weekly_range.end_col}}",
+       "target_column": "{{dynamic:weekly_range.agg_col}}"
+     }}
+  ]
+}
+```
+→ LLM API 호출 발생, 비용 + 지연 + 계산 오류 가능성
+
+**✅ 올바른 예 — 내장 액션 조합으로 LLM 없이 해결:**
+```json
+{
+  "dynamic_params": {
+    "target_date": {"type": "date", "prompt": "today"},
+    "week_start": {"type": "date", "prompt": "this_week_monday"}
+  },
+  "steps": [
+    {"step": 3, "action": "FIND_DATE_COLUMN",
+     "description": "오늘 날짜의 일별 컬럼 찾기",
+     "params": {"workbook": "tpl", "sheet": "Sheet1", "date": "{{dynamic:target_date}}"},
+     "store_as": "day_col"},
+
+    {"step": 4, "action": "FIND_DATE_RANGE",
+     "description": "이번 주 월~오늘 컬럼 범위 찾기",
+     "params": {"workbook": "tpl", "sheet": "Sheet1",
+                "start_date": "{{dynamic:week_start}}", "end_date": "{{dynamic:target_date}}"},
+     "store_as": "week_range"},
+
+    {"step": 5, "action": "FIND_ANCHOR",
+     "description": "주간 집계 컬럼 찾기",
+     "params": {"workbook": "tpl", "sheet": "Sheet1",
+                "search_value": "주간", "match_type": "contains"},
+     "store_as": "week_agg"},
+
+    {"step": 6, "action": "AGGREGATE_RANGE",
+     "description": "주간 누계 계산",
+     "params": {
+       "workbook": "tpl", "sheet": "Sheet1",
+       "source_columns_start": "$week_range.start_column",
+       "source_columns_end": "$week_range.end_column",
+       "source_start_row": 7, "source_end_row": 48,
+       "target_column": "$week_agg.column",
+       "method": "sum"
+     }}
+  ]
+}
+```
+→ LLM 호출 0회, 비용 0, 실제 Excel을 스캔하므로 정확도 높음
+
+#### EXTRACT_DATE를 활용한 파일명 기반 전체 흐름
+
+raw data 파일명에 날짜가 포함된 경우 (`YYYYMMDD_xxx.xlsx`):
+
+```json
+{
+  "steps": [
+    {"step": 1, "action": "OPEN_FILE",
+     "params": {"input_key": "raw_data", "alias": "raw"}},
+
+    {"step": 2, "action": "EXTRACT_DATE",
+     "description": "파일명에서 날짜 + 파생 정보 추출",
+     "params": {"source": "$input.raw_data", "pattern": "YYYYMMDD"},
+     "store_as": "file_date"},
+
+    {"step": 3, "action": "FIND_DATE_COLUMN",
+     "params": {"workbook": "tpl", "sheet": "Sheet1", "date": "$file_date.date"},
+     "store_as": "day_col"},
+
+    {"step": 4, "action": "FIND_DATE_RANGE",
+     "params": {"workbook": "tpl", "sheet": "Sheet1",
+                "start_date": "$file_date.week_monday", "end_date": "$file_date.date"},
+     "store_as": "week_range"},
+
+    {"step": 5, "action": "FIND_ANCHOR",
+     "params": {"workbook": "tpl", "sheet": "Sheet1",
+                "search_value": "주간", "match_type": "contains"},
+     "store_as": "week_agg"}
+  ]
+}
+```
+→ EXTRACT_DATE가 `week_monday`, `month`, `quarter` 등을 한번에 계산하므로 dynamic_params 자체가 불필요할 수 있음
 
 ---
 
