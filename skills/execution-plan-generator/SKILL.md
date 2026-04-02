@@ -163,6 +163,7 @@ WRITE_DATA(source: "$raw_data")  → 전체 행 자동 기록
 사내 실행 엔진이 Pydantic으로 파싱하므로, **필드명이 정확히 일치해야 한다**.
 Pydantic 모델 원본은 `references/pydantic_model.py` 참조.
 ACTION 유형과 params 상세는 `references/action_reference.md` 참조.
+dynamic_params 작성법과 금지 패턴은 `references/dynamic_params_guide.md` 참조.
 완성된 예시는 `references/sample_plan.json` 참조.
 
 #### 필수 스키마 (정확한 필드명)
