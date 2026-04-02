@@ -300,45 +300,123 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 
 **반환값**: `{"rows_aggregated": 42, "method": "sum"}`
 
-**동적 파라미터와 조합 예시** (주간/월간 누계):
+**builtin action 조합 예시** (주간/월간 누계):
+
+> ⚠️ `dynamic_params`의 `type`은 `"date"`만 허용된다. 위치 계산이 필요하면
+> `FIND_DATE_COLUMN` / `FIND_DATE_RANGE` / `FIND_ANCHOR` action을 사용한다.
+
 ```json
 {
   "dynamic_params": {
-    "today_layout": {
-      "type": "lookup",
-      "prompt": "Sheet1 6행 헤더: BT열=3/1 시작, 1일1열. 매주 일요일 다음에 W열(주간합계), 매월 말일 다음에 M열(월간합계). 오늘 기준: daily_column, weekly_column, weekly_start, monthly_column, monthly_start를 JSON으로 반환.",
-      "format": "json"
+    "execution_date": {
+      "type": "date",
+      "prompt": "today",
+      "description": "실행일 날짜"
+    },
+    "week_monday": {
+      "type": "date",
+      "prompt": "this_week_monday",
+      "description": "이번 주 월요일"
+    },
+    "month_start": {
+      "type": "date",
+      "prompt": "this_month_start",
+      "description": "이번 달 1일"
     }
   },
   "steps": [
     {
+      "step": 3,
+      "action": "FIND_DATE_COLUMN",
+      "description": "오늘 날짜 열 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT6:ZZ6",
+        "date": "{{dynamic:execution_date}}"
+      },
+      "store_as": "today_col"
+    },
+    {
+      "step": 4,
+      "action": "FIND_ANCHOR",
+      "description": "이번 주 주간합계(W) 열 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT6:ZZ6",
+        "anchor_value": "W",
+        "search_after": "$today_col.column"
+      },
+      "store_as": "weekly_col"
+    },
+    {
       "step": 5,
+      "action": "FIND_DATE_RANGE",
+      "description": "이번 주 월~오늘 범위 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT6:ZZ6",
+        "start_date": "{{dynamic:week_monday}}",
+        "end_date": "{{dynamic:execution_date}}"
+      },
+      "store_as": "weekly_range"
+    },
+    {
+      "step": 6,
       "action": "AGGREGATE_RANGE",
       "description": "이번 주 일별 데이터를 주간 누계 열에 행별 합계",
       "params": {
         "workbook": "mat",
         "sheet": "Sheet1",
-        "source_columns_start": "{{dynamic:today_layout.weekly_start}}",
-        "source_columns_end": "{{dynamic:today_layout.daily_column}}",
+        "source_columns_start": "$weekly_range.start_column",
+        "source_columns_end": "$weekly_range.end_column",
         "source_start_row": 7,
         "source_end_row": 48,
-        "target_column": "{{dynamic:today_layout.weekly_column}}",
+        "target_column": "$weekly_col.column",
         "target_start_row": 7,
         "method": "sum"
       }
     },
     {
-      "step": 6,
+      "step": 7,
+      "action": "FIND_DATE_RANGE",
+      "description": "이번 달 1일~오늘 범위 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT6:ZZ6",
+        "start_date": "{{dynamic:month_start}}",
+        "end_date": "{{dynamic:execution_date}}"
+      },
+      "store_as": "monthly_range"
+    },
+    {
+      "step": 8,
+      "action": "FIND_ANCHOR",
+      "description": "이번 달 월간합계(M) 열 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT6:ZZ6",
+        "anchor_value": "M",
+        "search_after": "$today_col.column"
+      },
+      "store_as": "monthly_col"
+    },
+    {
+      "step": 9,
       "action": "AGGREGATE_RANGE",
       "description": "이번 달 일별 데이터를 월간 누계 열에 행별 합계",
       "params": {
         "workbook": "mat",
         "sheet": "Sheet1",
-        "source_columns_start": "{{dynamic:today_layout.monthly_start}}",
-        "source_columns_end": "{{dynamic:today_layout.daily_column}}",
+        "source_columns_start": "$monthly_range.start_column",
+        "source_columns_end": "$monthly_range.end_column",
         "source_start_row": 7,
         "source_end_row": 48,
-        "target_column": "{{dynamic:today_layout.monthly_column}}",
+        "target_column": "$monthly_col.column",
         "target_start_row": 7,
         "method": "sum"
       }
@@ -351,21 +429,35 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 
 ## 날짜 열 탐색 + 시트 간 복사 패턴
 
-### 방법 A: 동적 파라미터 (반복 실행용, 권장)
+### 방법 A: dynamic_params(날짜) + FIND_DATE_COLUMN (권장)
 
-`dynamic_params`로 날짜와 위치를 선언하면 매일 자동 해소된다. FIND_DATE_COLUMN step이 불필요.
+`dynamic_params`로 **날짜 값만** 선언하고, 위치 계산은 `FIND_DATE_COLUMN`에게 맡긴다.
+
+> ⚠️ `dynamic_params`로 열 위치를 직접 계산하려 하지 않는다.
+> `type`은 `"date"`만 허용되며, 위치 탐색은 반드시 builtin action을 사용한다.
 
 ```json
 {
   "dynamic_params": {
-    "today_target": {
-      "type": "lookup",
-      "prompt": "Sheet1의 Row 3에 BT열(인덱스 72)부터 M/D 형식 날짜가 1일 1열 간격. 시작일=2026-01-01(BT열). 오늘 날짜에 해당하는 열 문자와 행 번호를 JSON으로 반환. 형식: {\"date\": \"YYYY-MM-DD\", \"column\": \"XX\", \"date_row\": 3}",
-      "format": "json",
-      "description": "오늘 날짜의 Sheet1 위치"
+    "execution_date": {
+      "type": "date",
+      "prompt": "today",
+      "description": "실행일 날짜"
     }
   },
   "steps": [
+    {
+      "step": 4,
+      "action": "FIND_DATE_COLUMN",
+      "description": "Sheet1에서 오늘 날짜 열 탐색",
+      "params": {
+        "workbook": "mat",
+        "sheet": "Sheet1",
+        "scan_range": "BT3:ZZ3",
+        "date": "{{dynamic:execution_date}}"
+      },
+      "store_as": "date_info"
+    },
     {
       "step": 5,
       "action": "COPY_RANGE",
@@ -375,8 +467,8 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
         "source_sheet": "자재 계산식",
         "source_range": "D7:D48",
         "target_sheet": "Sheet1",
-        "target_column": "{{dynamic:today_target.column}}",
-        "target_start_row": "{{dynamic:today_target.date_row}}",
+        "target_column": "$date_info.column",
+        "target_start_row": "$date_info.date_row",
         "row_offset": 1,
         "paste_type": "values"
       }
@@ -386,13 +478,13 @@ column_mapping 미지정 시 소스 dict의 값 순서대로 target_start부터 
 ```
 
 **핵심 포인트**:
-- `{{dynamic:today_target.column}}`과 `{{dynamic:today_target.date_row}}`는 런타임에 resolver가 해소
-- `prompt`에 템플릿 구조(시작 열, 시작 날짜, 간격)를 명시해야 LLM이 정확히 계산 가능
-- FIND_DATE_COLUMN step 없이 직접 COPY_RANGE에서 위치를 참조
+- `dynamic_params`는 날짜 값(`"today"`)만 해소한다 — 위치 계산은 하지 않는다
+- `FIND_DATE_COLUMN`이 실제 Excel을 스캔하여 열 위치를 찾는다
+- `$date_info.column`과 `$date_info.date_row`는 **점 표기법**으로 dict 필드를 참조한다
 
-### 방법 B: FIND_DATE_COLUMN (1회 실행 또는 불규칙 패턴용)
+### 방법 B: FIND_DATE_COLUMN 단독 (1회 실행 또는 하드코딩 날짜용)
 
-패턴이 불규칙하거나 실제 Excel을 스캔해야 할 때 사용.
+날짜를 매번 바꿀 필요 없거나, 특정 날짜를 지정해야 할 때 사용.
 
 ```json
 {
