@@ -474,10 +474,18 @@ plan이 **반복 실행**될 때 실행 시점마다 바뀌는 날짜 값이 있
 {"type": "date", "prompt": "this_week_monday", "format": "YYYY-MM-DD", "description": "이번 주 월요일"}
 ```
 
-**위치 계산이 필요하면?** → `dynamic_params`가 아닌 builtin action을 사용한다:
-- 날짜 열 위치 → `FIND_DATE_COLUMN`
-- 날짜 범위 → `FIND_DATE_RANGE`
-- 특정 값 위치 → `FIND_ANCHOR`
+**`dynamic_params`는 날짜 값만 반환한다. 그 외 정보가 필요하면 builtin action을 조합한다:**
+
+| 필요한 정보 | ❌ 잘못된 접근 | ✅ 올바른 접근 |
+|------------|--------------|--------------|
+| 날짜 열 위치 | `type: "lookup"` 으로 열 계산 | `FIND_DATE_COLUMN` action |
+| 날짜 범위 (주간/월간) | `type: "lookup"` 으로 범위 계산 | `FIND_DATE_RANGE` action |
+| 주차/월 정보 | `type: "text"` 로 주차 정보 요청 | `week_number`, `month_number` prompt 사용 |
+| 특정 값 위치 | `type: "text"` 로 위치 계산 | `FIND_ANCHOR` action |
+| 구조화된 JSON | `type: "lookup"`, `format: "json"` | builtin action 여러 개 조합 |
+
+**핵심 원칙**: `dynamic_params`에는 `type: "date"` 외의 타입을 절대 사용하지 않는다.
+날짜 외의 런타임 정보(위치, 범위, 구조화 데이터)는 모두 step의 builtin action + `store_as` + `$변수.필드`로 해결한다.
 
 ### 참조 형식
 
