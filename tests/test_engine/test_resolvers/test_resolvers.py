@@ -1,15 +1,12 @@
-"""Resolver 테스트 (Builtin, Chain, plan 전체 해소)."""
+"""Resolver 테스트 (Builtin, plan 전체 해소)."""
 
 from __future__ import annotations
 
 from datetime import date, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from autooffice.engine.resolvers.builtin_resolver import BuiltinDynamicResolver
-from autooffice.engine.resolvers.chain import (
-    ChainResolver,
-    resolve_plan_dynamic_params,
-)
+from autooffice.engine.resolvers.chain import resolve_plan_dynamic_params
 from autooffice.models.execution_plan import (
     DynamicParamSpec,
     DynamicParamType,
@@ -27,36 +24,10 @@ class TestBuiltinDynamicResolver:
             "today_date": DynamicParamSpec(
                 type=DynamicParamType.DATE,
                 prompt="오늘 날짜",
-                format="YYYY-MM-DD",
             ),
         }
         result = resolver.resolve(declarations)
         assert result["today_date"] == date.today().isoformat()
-
-    def test_lookup_type_not_resolved(self):
-        """type=lookup은 builtin에서 해소하지 않음."""
-        resolver = BuiltinDynamicResolver()
-        declarations = {
-            "target": DynamicParamSpec(
-                type=DynamicParamType.LOOKUP,
-                prompt="Sheet1 위치 계산",
-            ),
-        }
-        result = resolver.resolve(declarations)
-        assert "target" not in result
-
-    def test_mixed_types(self):
-        """date만 해소, 나머지는 미해소."""
-        resolver = BuiltinDynamicResolver()
-        declarations = {
-            "today": DynamicParamSpec(type=DynamicParamType.DATE, prompt="오늘"),
-            "location": DynamicParamSpec(type=DynamicParamType.LOOKUP, prompt="위치"),
-            "note": DynamicParamSpec(type=DynamicParamType.TEXT, prompt="메모"),
-        }
-        result = resolver.resolve(declarations)
-        assert "today" in result
-        assert "location" not in result
-        assert "note" not in result
 
     def test_prompt_today(self):
         """prompt='today' → 오늘 날짜."""
@@ -220,64 +191,31 @@ class TestResolvePlanDynamicParams:
         result = resolve_plan_dynamic_params(plan)
         assert result is plan
 
-    def test_date_param_resolved_without_llm(self):
-        """type=date는 LLM 없이 해소된다."""
+    def test_date_param_resolved(self):
+        """type=date는 BuiltinResolver로 해소된다."""
         plan = self._make_plan(
             dynamic_params={
                 "today_date": {
                     "type": "date",
-                    "prompt": "오늘 날짜",
-                    "format": "YYYY-MM-DD",
+                    "prompt": "today",
                 },
             },
             step_params={"date": "{{dynamic:today_date}}"},
         )
-        # BuiltinResolver만 사용하는 resolver
-        builtin = BuiltinDynamicResolver()
-        result = resolve_plan_dynamic_params(plan, resolver=builtin)
+        result = resolve_plan_dynamic_params(plan)
         assert result.steps[0].params["date"] == date.today().isoformat()
 
     def test_original_plan_not_mutated(self):
         """원본 plan은 변경되지 않는다."""
         plan = self._make_plan(
             dynamic_params={
-                "today_date": {"type": "date", "prompt": "오늘"},
+                "today_date": {"type": "date", "prompt": "today"},
             },
             step_params={"date": "{{dynamic:today_date}}"},
         )
         original_param = plan.steps[0].params["date"]
-        resolve_plan_dynamic_params(plan, resolver=BuiltinDynamicResolver())
+        resolve_plan_dynamic_params(plan)
         assert plan.steps[0].params["date"] == original_param
-
-    def test_lookup_with_mock_llm(self):
-        """type=lookup은 LLM resolver를 통해 해소 (mock)."""
-        plan = self._make_plan(
-            dynamic_params={
-                "today_target": {
-                    "type": "lookup",
-                    "prompt": "Sheet1 BT열부터 1일1열",
-                    "format": "json",
-                },
-            },
-            step_params={
-                "target_column": "{{dynamic:today_target.column}}",
-                "target_row": "{{dynamic:today_target.date_row}}",
-            },
-        )
-
-        # Mock resolver: LLM 응답을 시뮬레이션
-        mock_resolver = MagicMock()
-        mock_resolver.resolve.return_value = {
-            "today_target": {
-                "date": "2026-03-30",
-                "column": "CQ",
-                "date_row": 3,
-            },
-        }
-
-        result = resolve_plan_dynamic_params(plan, resolver=mock_resolver)
-        assert result.steps[0].params["target_column"] == "CQ"
-        assert result.steps[0].params["target_row"] == 3
 
 
 class TestRunnerValidateDynamicMarkers:

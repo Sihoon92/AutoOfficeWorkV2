@@ -48,25 +48,21 @@ class OnFailAction(str, Enum):
 class DynamicParamType(str, Enum):
     """동적 파라미터 유형.
 
-    - date: 날짜 (BuiltinResolver로 LLM 없이 해소 가능)
-    - lookup: 구조적 조회 (LLM이 템플릿 구조를 기반으로 계산, JSON 반환)
-    - text: 단순 텍스트 (LLM 해소)
+    - date: 날짜 (BuiltinResolver로 LLM 없이 로컬 해소)
     """
 
     DATE = "date"
-    LOOKUP = "lookup"
-    TEXT = "text"
 
 
 class DynamicParamSpec(BaseModel):
     """동적 파라미터 선언.
 
     Claude가 plan 생성 시 실행 시점마다 바뀌는 값을 선언한다.
-    런타임에 resolver가 이 선언을 읽어 실제 값으로 해소한다.
+    런타임에 BuiltinResolver가 이 선언을 읽어 실제 값으로 해소한다.
     """
 
-    type: DynamicParamType = DynamicParamType.TEXT
-    prompt: str = Field(description="resolver에게 전달할 해소 지시문. type=date면 함수 키(today, yesterday 등), type=lookup/text면 LLM 자연어 지시문")
+    type: DynamicParamType = DynamicParamType.DATE
+    prompt: str = Field(description="BuiltinResolver 함수 키워드 (today, yesterday, this_week_monday 등)")
     format: str = Field(default="", description="기대 출력 형식 (예: YYYY-MM-DD, json)")
     description: str = Field(default="", description="사람용 설명")
     default: str | None = Field(default=None, description="해소 실패 시 기본값")

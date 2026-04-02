@@ -1,10 +1,10 @@
 """AutoOffice CLI - 실행 계획 실행 및 관리.
 
 사용법:
-    autooffice run plan.json --data ./data/
+    autooffice run plan.json --data ./data/ --input raw_data=file.xlsx
     autooffice validate plan.json
     autooffice cache list
-    autooffice cache run <plan_id> --data ./data/
+    autooffice cache run <plan_id> --data ./data/ --input raw_data=file.xlsx
 """
 
 from __future__ import annotations
@@ -14,14 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
-import os
-
 import click
-from dotenv import load_dotenv
-
-load_dotenv()
-
-_DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 from autooffice.engine.actions import build_default_registry
 from autooffice.engine.context import EngineContext
@@ -77,8 +70,7 @@ def main(verbose: bool) -> None:
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
 @click.option("--input", "-i", "inputs", multiple=True, help="입력 파일 매핑 (KEY=PATH, 반복 가능)")
 @click.option("--no-resolve", is_flag=True, default=False, help="동적 파라미터 해소 건너뛰기")
-@click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
-def run(plan_file: str, data: str, inputs: tuple[str, ...], no_resolve: bool, llm_model: str) -> None:
+def run(plan_file: str, data: str, inputs: tuple[str, ...], no_resolve: bool) -> None:
     """execution_plan.json을 실행한다."""
     click.echo(f"plan 로드: {plan_file}")
 
@@ -94,16 +86,12 @@ def run(plan_file: str, data: str, inputs: tuple[str, ...], no_resolve: bool, ll
     if plan.inputs:
         _validate_inputs(plan.inputs, input_map, data_dir)
 
-    # 동적 파라미터 해소
+    # 동적 파라미터 해소 (BuiltinResolver, LLM 불필요)
     if not no_resolve and plan.dynamic_params:
-        from autooffice.engine.resolvers.chain import (
-            ChainResolver,
-            resolve_plan_dynamic_params,
-        )
+        from autooffice.engine.resolvers.chain import resolve_plan_dynamic_params
 
         click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
-        resolver = ChainResolver(llm_model=llm_model)
-        plan = resolve_plan_dynamic_params(plan, resolver)
+        plan = resolve_plan_dynamic_params(plan)
         click.echo("동적 파라미터 해소 완료")
 
     runner = PlanRunner(build_default_registry())
@@ -187,8 +175,7 @@ def cache_list() -> None:
 @click.argument("plan_id")
 @click.option("--data", "-d", type=click.Path(exists=True), default=".", help="데이터 디렉토리")
 @click.option("--input", "-i", "inputs", multiple=True, help="입력 파일 매핑 (KEY=PATH, 반복 가능)")
-@click.option("--llm-model", default=_DEFAULT_LLM_MODEL, help="동적 파라미터 해소용 LLM 모델")
-def cache_run(plan_id: str, data: str, inputs: tuple[str, ...], llm_model: str) -> None:
+def cache_run(plan_id: str, data: str, inputs: tuple[str, ...]) -> None:
     """캐시된 plan을 실행한다."""
     from autooffice.cache.plan_cache import PlanCache
 
@@ -207,14 +194,10 @@ def cache_run(plan_id: str, data: str, inputs: tuple[str, ...], llm_model: str) 
 
     # 동적 파라미터 해소
     if plan.dynamic_params:
-        from autooffice.engine.resolvers.chain import (
-            ChainResolver,
-            resolve_plan_dynamic_params,
-        )
+        from autooffice.engine.resolvers.chain import resolve_plan_dynamic_params
 
         click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
-        resolver = ChainResolver(llm_model=llm_model)
-        plan = resolve_plan_dynamic_params(plan, resolver)
+        plan = resolve_plan_dynamic_params(plan)
 
     runner = PlanRunner(build_default_registry())
     ctx = EngineContext(data_dir=data, input_files=input_map)
