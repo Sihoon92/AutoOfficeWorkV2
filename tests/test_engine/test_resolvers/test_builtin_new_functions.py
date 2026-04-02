@@ -63,3 +63,11 @@ class TestNewDateFunctions:
         """신규 함수도 대소문자 무시."""
         result = self._resolve_one("Today_YYYYMMDD")
         assert result == date.today().strftime("%Y%m%d")
+
+    def test_prompt_is_required(self):
+        """prompt 필드 누락 시 Pydantic 검증 에러."""
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="prompt"):
+            DynamicParamSpec(type=DynamicParamType.DATE)

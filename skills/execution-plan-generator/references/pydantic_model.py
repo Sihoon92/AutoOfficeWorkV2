@@ -66,7 +66,7 @@ class DynamicParamSpec(BaseModel):
     """
 
     type: DynamicParamType = DynamicParamType.TEXT
-    prompt: str = Field(description="resolver에게 전달할 해소 지시문 (자연어)")
+    prompt: str = Field(description="resolver에게 전달할 해소 지시문. type=date면 함수 키(today, yesterday 등), type=lookup/text면 LLM 자연어 지시문")
     format: str = Field(default="", description="기대 출력 형식 (예: YYYY-MM-DD, json)")
     description: str = Field(default="", description="사람용 설명")
     default: str | None = Field(default=None, description="해소 실패 시 기본값")
