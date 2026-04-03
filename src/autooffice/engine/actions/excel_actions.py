@@ -371,13 +371,76 @@ class RecalculateHandler(ActionHandler):
             return ActionResult(success=False, error=f"RECALCULATE 실패: {e}")
 
 
+def _auto_init_month_columns(
+    ws: Any,
+    header_row: int,
+    last_col_idx: int,
+    year: int,
+    month: int,
+    existing_date_cells: list[tuple[int, date]],
+) -> int:
+    """해당 월의 일별 날짜 헤더를 마지막 열 다음에 자동 생성한다.
+
+    기존 헤더의 날짜 형식을 감지하여 동일한 형식으로 생성한다.
+
+    Args:
+        ws: xlwings 시트 객체
+        header_row: 날짜 헤더 행 번호
+        last_col_idx: 기존 마지막 날짜 열 인덱스 (1-based)
+        year: 생성할 연도
+        month: 생성할 월
+        existing_date_cells: 기존 날짜 셀 목록 [(col_idx, date), ...]
+
+    Returns:
+        생성된 일수 (0이면 생성 실패)
+    """
+    # 해당 월의 일수 계산
+    if month == 12:
+        days_in_month = (date(year + 1, 1, 1) - date(year, 12, 1)).days
+    else:
+        days_in_month = (date(year, month + 1, 1) - date(year, month, 1)).days
+
+    # 기존 헤더 형식 감지 (M/D가 기본)
+    date_format = "M/D"
+    if existing_date_cells:
+        # 기존 셀의 첫 번째 날짜 열 값을 읽어 형식 추론
+        first_col_idx, first_date = existing_date_cells[0]
+        cell_val = ws.range((header_row, first_col_idx)).value
+        if isinstance(cell_val, str):
+            if "-" in cell_val and len(cell_val) > 5:
+                date_format = "YYYY-MM-DD"
+            # 그 외는 기본 M/D
+
+    # 날짜 헤더 생성
+    headers = []
+    for day in range(1, days_in_month + 1):
+        d = date(year, month, day)
+        if date_format == "YYYY-MM-DD":
+            headers.append(d.isoformat())
+        else:
+            headers.append(f"{d.month}/{d.day}")
+
+    # 마지막 열 다음부터 가로로 쓰기
+    new_start_col = last_col_idx + 1
+    start_cell = f"{_col_index_to_letter(new_start_col)}{header_row}"
+
+    try:
+        ws.range(start_cell).value = [headers]  # [[...]] = 1행 N열
+        return days_in_month
+    except Exception as e:
+        logger.error("월 헤더 자동 생성 실패: %s", e)
+        return 0
+
+
 class FindDateColumnHandler(ActionHandler):
     """FIND_DATE_COLUMN: 시트에서 날짜 패턴을 탐색하여 대상 열을 결정한다.
 
     지정된 scan_range 내에서 날짜 값이 있는 셀을 찾고,
     날짜가 가장 많은 행을 date_header_row로 결정한다.
-    오늘 날짜와 매칭되는 열이 있으면 해당 열을,
-    없으면 마지막 날짜 다음 열을 추론하여 반환한다.
+    대상 날짜와 매칭되는 열이 있으면 해당 열을 반환한다.
+    대상 날짜의 월이 존재하지 않으면 해당 월의 일별 헤더를
+    자동 생성한 뒤 재탐색한다 (월 전환 자동 처리).
+    자동 생성도 실패하면 패턴 기반으로 열을 추론한다.
 
     params:
         workbook: 워크북 alias
@@ -454,7 +517,7 @@ class FindDateColumnHandler(ActionHandler):
             date_row = max(date_cells_by_row, key=lambda r: len(date_cells_by_row[r]))
             date_cells = sorted(date_cells_by_row[date_row], key=lambda x: x[0])
 
-            # 오늘 날짜 정확히 매칭
+            # 대상 날짜 정확히 매칭
             for col_idx, d in date_cells:
                 if d == target_date:
                     col_letter = _col_index_to_letter(col_idx)
@@ -464,7 +527,45 @@ class FindDateColumnHandler(ActionHandler):
                         message=f"날짜({target_date}) 발견: {col_letter}{date_row}",
                     )
 
-            # 매칭 실패 → 패턴 기반 추론
+            # 매칭 실패 → 해당 월 헤더 자동 생성 시도
+            existing_months = {(d.year, d.month) for _, d in date_cells}
+            target_ym = (target_date.year, target_date.month)
+
+            if target_ym not in existing_months:
+                # 해당 월의 일별 헤더를 마지막 열 다음에 자동 생성
+                last_col_idx, last_date = date_cells[-1]
+                created = _auto_init_month_columns(
+                    ws, date_row, last_col_idx,
+                    target_date.year, target_date.month, date_cells,
+                )
+                if created:
+                    logger.info(
+                        "%d년 %d월 헤더 자동 생성 완료 (%d일)",
+                        target_date.year, target_date.month, created,
+                    )
+                    # 확장된 범위로 재탐색
+                    extended_end_col = last_col_idx + created
+                    extended_range = (
+                        f"{_col_index_to_letter(start_col)}{date_row}"
+                        f":{_col_index_to_letter(extended_end_col)}{date_row}"
+                    )
+                    rng2 = ws.range(extended_range)
+                    raw2 = rng2.value
+                    if raw2 is not None:
+                        if not isinstance(raw2, list):
+                            raw2 = [raw2]
+                        for c_offset, cell_val in enumerate(raw2):
+                            parsed = _try_parse_date(cell_val, year=target_date.year)
+                            if parsed == target_date:
+                                actual_col = start_col + c_offset
+                                col_letter = _col_index_to_letter(actual_col)
+                                return ActionResult(
+                                    success=True,
+                                    data={"column": col_letter, "date_row": date_row},
+                                    message=f"날짜({target_date}) 발견 (월 자동 생성 후): {col_letter}{date_row}",
+                                )
+
+            # 패턴 기반 추론 (자동 생성 실패 또는 같은 월 내 미래 날짜)
             last_col_idx, last_date = date_cells[-1]
             days_gap = (target_date - last_date).days
 
@@ -477,7 +578,6 @@ class FindDateColumnHandler(ActionHandler):
                     ),
                 )
 
-            # 열 간격 패턴 감지 (기본: 1일 = 1열)
             col_per_day = 1.0
             if len(date_cells) >= 2:
                 col_intervals = [
@@ -488,7 +588,6 @@ class FindDateColumnHandler(ActionHandler):
                     (date_cells[i][1] - date_cells[i - 1][1]).days
                     for i in range(1, len(date_cells))
                 ]
-                # 가장 빈번한 패턴 사용
                 if day_intervals and all(d > 0 for d in day_intervals):
                     typical_col = max(set(col_intervals), key=col_intervals.count)
                     typical_day = max(set(day_intervals), key=day_intervals.count)
