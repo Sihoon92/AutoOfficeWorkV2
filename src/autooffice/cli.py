@@ -91,7 +91,7 @@ def run(plan_file: str, data: str, inputs: tuple[str, ...], no_resolve: bool) ->
         from autooffice.engine.resolvers.chain import resolve_plan_dynamic_params
 
         click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
-        plan = resolve_plan_dynamic_params(plan)
+        plan = resolve_plan_dynamic_params(plan, input_files=input_map)
         click.echo("동적 파라미터 해소 완료")
 
     runner = PlanRunner(build_default_registry())
@@ -197,7 +197,7 @@ def cache_run(plan_id: str, data: str, inputs: tuple[str, ...]) -> None:
         from autooffice.engine.resolvers.chain import resolve_plan_dynamic_params
 
         click.echo(f"동적 파라미터 해소 중... ({len(plan.dynamic_params)}개)")
-        plan = resolve_plan_dynamic_params(plan)
+        plan = resolve_plan_dynamic_params(plan, input_files=input_map)
 
     runner = PlanRunner(build_default_registry())
     ctx = EngineContext(data_dir=data, input_files=input_map)
